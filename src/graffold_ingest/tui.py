@@ -344,6 +344,192 @@ def _build_menu():
     _pause()
 
 
+# ─── Schema Tools ─────────────────────────────────────────────────────────
+
+
+def _schema_menu():
+    while True:
+        choice = _menu(
+            "④ Schema Tools — Define your knowledge graph structure",
+            [
+                "Discover from sample data",
+                "Discover from domain description",
+                "Validate existing schema",
+                "Refine with feedback",
+                "View current schema",
+                "← Back",
+            ],
+            [
+                "LLM analyzes your data and proposes a schema",
+                "describe your domain in plain English",
+                "check schema.yaml for errors",
+                "tell the LLM what to change",
+                "show loaded entity/relationship types",
+                "",
+            ],
+        )
+        if choice in (-1, 5):
+            return
+        if choice == 0:
+            _schema_discover_file()
+        elif choice == 1:
+            _schema_discover_domain()
+        elif choice == 2:
+            _schema_validate()
+        elif choice == 3:
+            _schema_refine()
+        elif choice == 4:
+            _schema_view()
+
+
+def _schema_discover_file():
+    _clear()
+    print(_cyan(BANNER))
+    print(f"  {_bold('🔍 Discover Schema from Data')}\n")
+
+    path = _input_prompt("Sample file path (PDF, CSV, TXT)")
+    if not path:
+        return
+    service = _input_prompt("LLM service", "bedrock")
+    output = _input_prompt("Output file", "schema.yaml")
+
+    from pathlib import Path
+
+    content = Path(path).read_text(errors="ignore")[:8000]
+    print(f"\n  Analyzing {len(content)} chars...")
+
+    import asyncio
+    from .pipeline.discover import discover_schema, save_schema
+
+    try:
+        yaml_content = asyncio.run(discover_schema(content=content, llm_service=service))
+        save_schema(yaml_content, output)
+        print(f"\n  {_green('✓')} Schema saved to {output}")
+        print(f"\n{_dim(yaml_content[:400])}")
+    except Exception as exc:
+        print(f"  {_red('✗')} {exc}")
+    _pause()
+
+
+def _schema_discover_domain():
+    _clear()
+    print(_cyan(BANNER))
+    print(f"  {_bold('🔍 Discover Schema from Domain')}\n")
+    print(f"  {_dim('Describe your domain in plain English.')}")
+    print(f"  {_dim('Example: \"cybersecurity threat intelligence - APTs, CVEs, malware families\"')}\n")
+
+    domain = _input_prompt("Domain description")
+    if not domain:
+        return
+    service = _input_prompt("LLM service", "bedrock")
+    output = _input_prompt("Output file", "schema.yaml")
+
+    print(f"\n  Generating schema for: {_yellow(domain)}...")
+
+    import asyncio
+    from .pipeline.discover import discover_schema, save_schema
+
+    try:
+        yaml_content = asyncio.run(discover_schema(domain=domain, llm_service=service))
+        save_schema(yaml_content, output)
+        print(f"\n  {_green('✓')} Schema saved to {output}")
+        print(f"\n{_dim(yaml_content[:400])}")
+    except Exception as exc:
+        print(f"  {_red('✗')} {exc}")
+    _pause()
+
+
+def _schema_validate():
+    _clear()
+    print(_cyan(BANNER))
+    print(f"  {_bold('✅ Validate Schema')}\n")
+
+    path = _input_prompt("Schema file", "schema.yaml")
+    from pathlib import Path
+
+    from .pipeline.discover import validate_schema
+
+    try:
+        content = Path(path).read_text()
+        issues = validate_schema(content)
+        if issues:
+            print(f"\n  {_red('✗')} {len(issues)} issue(s):")
+            for issue in issues:
+                print(f"    • {issue}")
+        else:
+            from .pipeline.schema import KGSchema
+
+            s = KGSchema.load(path)
+            print(f"\n  {_green('✓')} Valid schema")
+            print(f"    {len(s.entities)} entity types, {len(s.relationships)} relationship types")
+    except FileNotFoundError:
+        print(f"  {_red('✗')} File not found: {path}")
+    _pause()
+
+
+def _schema_refine():
+    _clear()
+    print(_cyan(BANNER))
+    print(f"  {_bold('✏️  Refine Schema')}\n")
+
+    path = _input_prompt("Schema file", "schema.yaml")
+    from pathlib import Path
+
+    try:
+        current = Path(path).read_text()
+    except FileNotFoundError:
+        print(f"  {_red('✗')} File not found: {path}")
+        _pause()
+        return
+
+    print(f"  {_dim('Current schema loaded.')}")
+    feedback = _input_prompt("What should change?")
+    if not feedback:
+        return
+    service = _input_prompt("LLM service", "bedrock")
+
+    import asyncio
+    from .pipeline.discover import refine_schema, save_schema
+
+    try:
+        updated = asyncio.run(refine_schema(current, feedback, llm_service=service))
+        save_schema(updated, path)
+        print(f"\n  {_green('✓')} Updated {path}")
+    except Exception as exc:
+        print(f"  {_red('✗')} {exc}")
+    _pause()
+
+
+def _schema_view():
+    _clear()
+    print(_cyan(BANNER))
+    print(f"  {_bold('📋 Current Schema')}\n")
+
+    path = _input_prompt("Schema file", "schema.yaml")
+    try:
+        from .pipeline.schema import KGSchema
+
+        s = KGSchema.load(path)
+        print(f"  {_bold('Entities:')}")
+        for e in s.entities:
+            examples = ", ".join(e.examples[:3])
+            print(f"    • {_cyan(e.name)}: {e.description}")
+            print(f"      {_dim(f'e.g. {examples}')}")
+        print(f"\n  {_bold('Relationships:')}")
+        for r in s.relationships:
+            src = " | ".join(r.source)
+            tgt = " | ".join(r.target)
+            print(f"    • {_cyan(r.type)}: {src} → {tgt}")
+        print(f"\n  {_bold('Rules:')}")
+        for rule in s.extraction_rules[:5]:
+            print(f"    • {_dim(rule)}")
+    except FileNotFoundError:
+        print(f"  {_dim('No schema.yaml found. Use Discover to create one.')}")
+    except Exception as exc:
+        print(f"  {_red('✗')} {exc}")
+    _pause()
+
+
 # ─── Status ───────────────────────────────────────────────────────────────
 
 
@@ -381,19 +567,21 @@ def main():
                     "① Fetch Data",
                     "② Extract Entities",
                     "③ Build Knowledge Graph",
-                    "④ Status",
+                    "④ Schema Tools",
+                    "⑤ Status",
                     "Quit",
                 ],
                 [
                     "web, PDF, API, CSV, database, smart agent",
                     "LLM-powered schema-free extraction",
                     "full pipeline: fetch → extract → publish",
+                    "discover, validate, or refine your schema",
                     "connectors, config, pipeline state",
                     "",
                 ],
             )
 
-            if choice in (-1, 4):
+            if choice in (-1, 5):
                 _clear()
                 print(f"\n  {_dim('Bye!')}\n")
                 break
@@ -404,6 +592,8 @@ def main():
             elif choice == 2:
                 _build_menu()
             elif choice == 3:
+                _schema_menu()
+            elif choice == 4:
                 _show_status()
     except KeyboardInterrupt:
         _clear()

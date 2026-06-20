@@ -1,0 +1,82 @@
+version: "1.0"
+description: "General-purpose knowledge graph schema — customize for your domain"
+
+entities:
+  - name: Person
+    description: "A named individual"
+    examples: ["Elon Musk", "Marie Curie", "Jeff Bezos"]
+    anti_examples: ["person", "people", "individual", "someone", "user"]
+
+  - name: Organization
+    description: "A company, institution, or group"
+    examples: ["Google", "MIT", "World Health Organization"]
+    anti_examples: ["company", "organization", "institution", "group"]
+
+  - name: Product
+    description: "A specific product, service, or technology"
+    examples: ["iPhone 15", "GPT-4", "Kubernetes"]
+    anti_examples: ["product", "service", "tool", "platform"]
+
+  - name: Location
+    description: "A geographic location or place"
+    examples: ["San Francisco", "European Union", "Silicon Valley"]
+    anti_examples: ["location", "place", "region", "area"]
+
+  - name: Concept
+    description: "An abstract concept, methodology, or framework"
+    examples: ["machine learning", "supply chain optimization", "CRISPR"]
+    anti_examples: ["concept", "idea", "approach", "method"]
+
+  - name: Event
+    description: "A specific named event"
+    examples: ["COVID-19 pandemic", "2024 US Election", "CES 2025"]
+    anti_examples: ["event", "occurrence", "incident"]
+
+relationships:
+  - type: WORKS_FOR
+    description: "Person is employed by or affiliated with an organization"
+    source: [Person]
+    target: [Organization]
+
+  - type: CREATED
+    description: "Person or organization created/founded something"
+    source: [Person, Organization]
+    target: [Product, Organization, Concept]
+
+  - type: LOCATED_IN
+    description: "Entity is located in or headquartered at a place"
+    source: [Organization, Person, Event]
+    target: [Location]
+
+  - type: RELATED_TO
+    description: "General relationship when no specific type applies"
+    source: [Person, Organization, Product, Concept]
+    target: [Person, Organization, Product, Concept]
+
+  - type: COMPETES_WITH
+    description: "Organizations or products in competition"
+    source: [Organization, Product]
+    target: [Organization, Product]
+
+  - type: USES
+    description: "Entity uses or depends on another"
+    source: [Person, Organization, Product]
+    target: [Product, Concept]
+
+  - type: ACQUIRED
+    description: "Organization acquired another"
+    source: [Organization]
+    target: [Organization]
+
+  - type: PARTICIPATED_IN
+    description: "Person or org participated in an event"
+    source: [Person, Organization]
+    target: [Event]
+
+extraction_rules:
+  - "Only extract SPECIFIC named entities — never generic terms"
+  - "Names must be proper nouns or specific named things, not descriptions"
+  - "Every relationship MUST have a source_sentence that is the exact verbatim text from the input"
+  - "Prefer specific relationship types over RELATED_TO when the text supports it"
+  - "For tabular data: extract entities from cell values, relationships from row associations"
+  - "Do NOT extract: pronouns, generic descriptions, measurement units, statistical terms"

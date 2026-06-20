@@ -83,6 +83,102 @@ def tui() -> None:
     tui_main()
 
 
+@cli.group()
+def schema() -> None:
+    """Schema tools — discover, validate, refine your domain schema."""
+
+
+@schema.command()
+@click.option("--domain", "-d", default="", help="Domain description in plain English")
+@click.option("--from-file", "from_file", default="", help="Sample file to analyze")
+@click.option("--from-url", "from_url", default="", help="URL to analyze")
+@click.option("--service", default="bedrock", help="LLM service")
+@click.option("--output", "-o", default="schema.yaml", help="Output file")
+def discover(domain: str, from_file: str, from_url: str, service: str, output: str) -> None:
+    """Discover a schema from sample data or a domain description."""
+    from .pipeline.discover import discover_schema, save_schema, validate_schema
+
+    content = ""
+    if from_file:
+        from pathlib import Path
+
+        content = Path(from_file).read_text(errors="ignore")[:8000]
+        console.print(f"[cyan]Analyzing:[/] {from_file} ({len(content)} chars)")
+    elif from_url:
+        import httpx
+
+        content = httpx.get(from_url, timeout=30).text[:8000]
+        console.print(f"[cyan]Analyzing:[/] {from_url}")
+    elif domain:
+        content = domain
+        console.print(f"[cyan]Domain:[/] {domain}")
+    else:
+        console.print("[red]Provide --domain, --from-file, or --from-url[/]")
+        return
+
+    console.print("[dim]Generating schema with LLM...[/]")
+    yaml_content = asyncio.run(discover_schema(content=content, llm_service=service))
+
+    issues = validate_schema(yaml_content)
+    if issues:
+        console.print(f"[yellow]⚠ Schema has {len(issues)} issue(s):[/]")
+        for issue in issues:
+            console.print(f"  • {issue}")
+    else:
+        console.print("[green]✓[/] Schema is valid")
+
+    save_schema(yaml_content, output)
+    console.print(f"[green]✓[/] Saved to {output}")
+    console.print(f"\n[dim]Preview:[/]\n{yaml_content[:500]}")
+
+
+@schema.command()
+@click.argument("path", default="schema.yaml")
+def validate(path: str) -> None:
+    """Validate a schema YAML file."""
+    from pathlib import Path
+
+    from .pipeline.discover import validate_schema
+
+    content = Path(path).read_text()
+    issues = validate_schema(content)
+    if issues:
+        console.print(f"[red]✗[/] {len(issues)} issue(s) in {path}:")
+        for issue in issues:
+            console.print(f"  • {issue}")
+    else:
+        console.print(f"[green]✓[/] {path} is valid")
+
+        from .pipeline.schema import KGSchema
+
+        s = KGSchema.load(path)
+        console.print(f"  {len(s.entities)} entity types, {len(s.relationships)} relationship types")
+
+
+@schema.command()
+@click.argument("path", default="schema.yaml")
+@click.option("--feedback", "-f", required=True, help="What to change")
+@click.option("--service", default="bedrock")
+def refine(path: str, feedback: str, service: str) -> None:
+    """Refine an existing schema based on feedback."""
+    from pathlib import Path
+
+    from .pipeline.discover import refine_schema, save_schema, validate_schema
+
+    current = Path(path).read_text()
+    console.print(f"[cyan]Refining:[/] {path}")
+    console.print(f"[dim]Feedback:[/] {feedback}")
+
+    updated = asyncio.run(refine_schema(current, feedback, llm_service=service))
+
+    issues = validate_schema(updated)
+    if issues:
+        console.print(f"[yellow]⚠ {len(issues)} issue(s) — saving anyway[/]")
+
+    save_schema(updated, path)
+    console.print(f"[green]✓[/] Updated {path}")
+
+
 def main() -> None:
     cli()
 

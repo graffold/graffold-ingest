@@ -89,6 +89,9 @@ async def run_pipeline(
     username: str = "neo4j",
     password: str = "",
     chunk_size: int = 2000,
+    tenant_id: str = "default",
+    project_id: str = "default",
+    incremental: bool = True,
     progress_callback: Callable[..., Any] | None = None,
     cancellation_event: asyncio.Event | None = None,
 ) -> PipelineResult:
@@ -105,12 +108,23 @@ async def run_pipeline(
         database_name: Database name
         username/password: Auth for graph DB
         chunk_size: Max chars per chunk
+        tenant_id: Tenant scope for incremental state
+        project_id: Project scope for incremental state
+        incremental: Skip unchanged documents (default True)
         progress_callback: Called with (stage, items_done, items_total)
         cancellation_event: Set to cancel mid-pipeline
 
     Returns:
         PipelineResult with full timing and stats
     """
+    from pathlib import Path as _Path
+
+    from ..incremental import (
+        FileFingerprintStore,
+        compute_fingerprint,
+        filter_unchanged,
+    )
+
     t0 = time.time()
     errors: list[dict[str, Any]] = []
     stages: list[StageResult] = []
@@ -163,12 +177,32 @@ async def run_pipeline(
             stages=stages, elapsed_seconds=time.time() - t0,
         )
 
+    # ─── Stage 1.5: Incremental filter ────────────────────────────────
+    fp_store = FileFingerprintStore(_Path.home() / ".graffold" / "fingerprints")
+    if incremental:
+        stage_t = time.time()
+        existing = fp_store.load_fingerprints(tenant_id, project_id)
+        docs, skipped = filter_unchanged(docs, existing)
+        stages.append(StageResult("filtering", time.time() - stage_t, len(docs) + len(skipped), len(docs)))
+        if skipped:
+            logger.info("Incremental: skipped %d unchanged docs, processing %d", len(skipped), len(docs))
+        if not docs:
+            return PipelineResult(
+                status="completed", source_type=source,
+                documents_fetched=len(skipped),
+                stages=stages, elapsed_seconds=time.time() - t0,
+            )
+
     # ─── Stage 2: Chunk ────────────────────────────────────────────────
     stage_t = time.time()
     _progress("chunking", 0, len(docs))
     chunks = chunk_documents(docs, chunk_size=chunk_size)
     stages.append(StageResult("chunking", time.time() - stage_t, len(docs), len(chunks)))
     _progress("chunking", len(docs), len(docs))
+
+    # Persist fingerprints after successful chunk
+    fingerprints = [compute_fingerprint(doc, chunk_count=len(chunks)) for doc in docs]
+    fp_store.save_fingerprints(tenant_id, project_id, fingerprints)
 
     if _cancelled():
         return PipelineResult(status="cancelled", source_type=source, elapsed_seconds=time.time() - t0)
@@ -227,6 +261,22 @@ async def run_pipeline(
 
     stages.append(StageResult("publishing", time.time() - stage_t, resolved_nodes, nodes_pub + edges_pub))
     _progress("publishing", len(results), len(results))
+
+    # ─── Stage 6: Embed + Vectorize ───────────────────────────────────
+    stage_t = time.time()
+    _progress("embedding", 0, nodes_pub)
+    vectors_uploaded = 0
+
+    try:
+        from .embed import embed_and_upload
+
+        all_nodes = [n for r in results for n in r.nodes]
+        vectors_uploaded = await embed_and_upload(all_nodes, database_uri=database_uri)
+    except Exception as e:
+        errors.append({"stage": "embedding", "error": str(e)})
+
+    stages.append(StageResult("embedding", time.time() - stage_t, nodes_pub, vectors_uploaded))
+    _progress("embedding", nodes_pub, nodes_pub)
 
     elapsed = time.time() - t0
     logger.info(

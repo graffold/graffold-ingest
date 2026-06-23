@@ -83,6 +83,16 @@ def tui() -> None:
     tui_main()
 
 
+@cli.command()
+@click.option("--host", default="0.0.0.0")
+@click.option("--port", default=8000, type=int)
+def serve(host: str, port: int) -> None:
+    """Run the ingest API server."""
+    import uvicorn
+
+    uvicorn.run("graffold_ingest.api:app", host=host, port=port)
+
+
 @cli.group()
 def schema() -> None:
     """Schema tools — discover, validate, refine your domain schema."""
@@ -94,14 +104,17 @@ def schema() -> None:
 @click.option("--from-url", "from_url", default="", help="URL to analyze")
 @click.option("--service", default="bedrock", help="LLM service")
 @click.option("--output", "-o", default="schema.yaml", help="Output file")
-def discover(domain: str, from_file: str, from_url: str, service: str, output: str) -> None:
+@click.option("--tenant", default="default", help="Tenant ID")
+@click.option("--project", default="default", help="Project ID")
+def discover(domain: str, from_file: str, from_url: str, service: str, output: str, tenant: str, project: str) -> None:
     """Discover a schema from sample data or a domain description."""
+    from pathlib import Path
+
     from .pipeline.discover import discover_schema, save_schema, validate_schema
+    from .schema_store import FileSchemaStore
 
     content = ""
     if from_file:
-        from pathlib import Path
-
         content = Path(from_file).read_text(errors="ignore")[:8000]
         console.print(f"[cyan]Analyzing:[/] {from_file} ({len(content)} chars)")
     elif from_url:
@@ -129,6 +142,11 @@ def discover(domain: str, from_file: str, from_url: str, service: str, output: s
 
     save_schema(yaml_content, output)
     console.print(f"[green]✓[/] Saved to {output}")
+
+    # Persist version
+    store = FileSchemaStore(Path.home() / ".graffold" / "schemas")
+    v = store.save(tenant, project, yaml_content, description=f"discover: {domain or from_file or from_url}")
+    console.print(f"[dim]Version {v.version_id[:8]} saved[/]")
     console.print(f"\n[dim]Preview:[/]\n{yaml_content[:500]}")
 
 
@@ -159,11 +177,14 @@ def validate(path: str) -> None:
 @click.argument("path", default="schema.yaml")
 @click.option("--feedback", "-f", required=True, help="What to change")
 @click.option("--service", default="bedrock")
-def refine(path: str, feedback: str, service: str) -> None:
+@click.option("--tenant", default="default", help="Tenant ID")
+@click.option("--project", default="default", help="Project ID")
+def refine(path: str, feedback: str, service: str, tenant: str, project: str) -> None:
     """Refine an existing schema based on feedback."""
     from pathlib import Path
 
     from .pipeline.discover import refine_schema, save_schema, validate_schema
+    from .schema_store import FileSchemaStore
 
     current = Path(path).read_text()
     console.print(f"[cyan]Refining:[/] {path}")
@@ -177,6 +198,11 @@ def refine(path: str, feedback: str, service: str) -> None:
 
     save_schema(updated, path)
     console.print(f"[green]✓[/] Updated {path}")
+
+    # Persist version
+    store = FileSchemaStore(Path.home() / ".graffold" / "schemas")
+    v = store.save(tenant, project, updated, description=f"refine: {feedback[:60]}")
+    console.print(f"[dim]Version {v.version_id[:8]} saved[/]")
 
 
 def main() -> None:

@@ -5,6 +5,7 @@ from .base import Connector, Document, ExtractionResult
 from .csv import CsvConnector
 from .database import DatabaseConnector
 from .pdf import PdfConnector
+from .sparselink import SparseLinkConnector
 from .web import WebConnector
 
 CONNECTORS: dict[str, type] = {
@@ -13,6 +14,7 @@ CONNECTORS: dict[str, type] = {
     "api": ApiConnector,
     "csv": CsvConnector,
     "database": DatabaseConnector,
+    "sparselink": SparseLinkConnector,
 }
 
 __all__ = [
@@ -24,5 +26,6 @@ __all__ = [
     "Document",
     "ExtractionResult",
     "PdfConnector",
+    "SparseLinkConnector",
     "WebConnector",
 ]

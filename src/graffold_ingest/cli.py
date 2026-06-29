@@ -93,6 +93,25 @@ def serve(host: str, port: int) -> None:
     uvicorn.run("graffold_ingest.api:app", host=host, port=port)
 
 
+@cli.command()
+@click.option("--format", "-f", type=click.Choice(["duckdb", "parquet", "jsonl", "tsv"]), default="duckdb")
+@click.option("--output", "-o", default="graph_export.duckdb", help="Output file or directory")
+@click.option("--database-uri", default="bolt://localhost:7687")
+@click.option("--limit", default=0, type=int, help="Max nodes (0=all)")
+def export(format: str, output: str, database_uri: str, limit: int) -> None:
+    """Export the knowledge graph to DuckDB, Parquet, JSONL, or TSV."""
+    from .pipeline.export import export_graph
+
+    console.print(f"[cyan]Exporting:[/] {format} → {output}")
+    stats = asyncio.run(export_graph(
+        database_uri=database_uri,
+        output=output,
+        format=format,
+        limit=limit,
+    ))
+    console.print(f"[green]✓[/] {stats['nodes']} nodes, {stats['edges']} edges → {output}")
+
+
 @cli.group()
 def schema() -> None:
     """Schema tools — discover, validate, refine your domain schema."""

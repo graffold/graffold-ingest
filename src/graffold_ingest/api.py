@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 import uuid
 from typing import Any, Protocol, runtime_checkable
 
-from fastapi import Depends, FastAPI, HTTPException, Header
+from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
 
@@ -33,6 +32,45 @@ class EnvTenantStore:
 
 _tenant_store: TenantStore = EnvTenantStore()
 _INTERNAL_MODE = os.environ.get("INGEST_INTERNAL_MODE", "true").lower() == "true"
+
+
+# -- Entity Push models --
+
+
+class EntityInput(BaseModel):
+    id: str | None = None
+    name: str
+    label: str = "Entity"
+    properties: dict[str, Any] = {}
+
+
+class RelationshipInput(BaseModel):
+    source: str
+    target: str
+    type: str = "RELATED_TO"
+    properties: dict[str, Any] = {}
+    source_sentence: str = ""
+
+
+class EntityPushRequest(BaseModel):
+    source_run_id: str
+    source_system: str = "agteria"
+    project_id: str = "default"
+    entities: list[EntityInput]
+    relationships: list[RelationshipInput] = []
+    database_uri: str = "bolt://localhost:7687"
+
+
+class EntityPushResponse(BaseModel):
+    job_id: str
+    status: str  # "completed" | "accepted"
+    nodes_created: int = 0
+    nodes_merged: int = 0
+    edges_created: int = 0
+    embeddings_queued: int = 0
+
+
+# -- Ingest models --
 
 
 class IngestRequest(BaseModel):
@@ -78,6 +116,66 @@ app = FastAPI(title="graffold-ingest")
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+_ENTITY_PUSH_ASYNC_THRESHOLD = 50
+
+
+@app.post("/v1/entities", response_model=EntityPushResponse)
+async def push_entities(
+    req: EntityPushRequest, tenant_id: str = Depends(_get_tenant)
+):
+    """Accept pre-extracted entities and publish to the graph.
+
+    Small payloads (<50 entities) are processed synchronously.
+    Large payloads (>=50 entities) are enqueued and processed async.
+    Re-pushing the same source_run_id is a no-op (idempotent).
+    """
+    from .pipeline.entity_push import process_entity_push
+
+    job_id = str(uuid.uuid4())
+
+    # Serialize entities/relationships to dicts for the pipeline
+    entities = [e.model_dump() for e in req.entities]
+    relationships = [r.model_dump() for r in req.relationships]
+
+    if len(req.entities) < _ENTITY_PUSH_ASYNC_THRESHOLD:
+        # Sync path — process inline
+        stats = await process_entity_push(
+            entities=entities,
+            relationships=relationships,
+            source_run_id=req.source_run_id,
+            source_system=req.source_system,
+            project_id=req.project_id,
+            database_uri=req.database_uri,
+        )
+        return EntityPushResponse(
+            job_id=job_id,
+            status="completed",
+            nodes_created=stats.nodes_created,
+            nodes_merged=stats.nodes_merged,
+            edges_created=stats.edges_created,
+            embeddings_queued=stats.embeddings_queued,
+        )
+
+    # Async path — enqueue as a job
+    from .queue import get_queue
+
+    queue = get_queue()
+    await queue.enqueue(
+        job_id=job_id,
+        tenant_id=tenant_id,
+        params={
+            "_task": "entity_push",
+            "entities": entities,
+            "relationships": relationships,
+            "source_run_id": req.source_run_id,
+            "source_system": req.source_system,
+            "project_id": req.project_id,
+            "database_uri": req.database_uri,
+        },
+    )
+    return EntityPushResponse(job_id=job_id, status="accepted")
 
 
 @app.post("/ingest", response_model=IngestResponse)

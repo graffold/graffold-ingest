@@ -57,23 +57,14 @@ class InMemoryJobQueue:
             logger.info("Running job %s for tenant %s", job.id, job.tenant_id)
 
             try:
-                from .pipeline.orchestrator import run_pipeline
+                task = job.params.get("_task", "pipeline")
 
-                result = await run_pipeline(
-                    source=job.params["source"],
-                    url=job.params.get("url", ""),
-                    path=job.params.get("path", ""),
-                    schema_path=job.params.get("schema_path"),
-                    llm_service=job.params.get("llm_service", "bedrock"),
-                    llm_model=job.params.get("llm_model", ""),
-                    database_uri=job.params.get("database_uri", "bolt://localhost:7687"),
-                    chunk_size=job.params.get("chunk_size", 2000),
-                    tenant_id=job.params.get("tenant_id", job.tenant_id),
-                    project_id=job.params.get("project_id", "default"),
-                    incremental=job.params.get("incremental", True),
-                )
+                if task == "entity_push":
+                    job.result = await self._run_entity_push(job)
+                else:
+                    job.result = await self._run_pipeline(job)
+
                 job.status = "completed"
-                job.result = result.to_report()
             except Exception as e:
                 job.status = "failed"
                 job.error = str(e)
@@ -81,6 +72,44 @@ class InMemoryJobQueue:
             finally:
                 job.completed_at = time.time()
                 self._queue.task_done()
+
+    async def _run_pipeline(self, job: Job) -> dict[str, Any]:
+        """Run the full ingestion pipeline."""
+        from .pipeline.orchestrator import run_pipeline
+
+        result = await run_pipeline(
+            source=job.params["source"],
+            url=job.params.get("url", ""),
+            path=job.params.get("path", ""),
+            schema_path=job.params.get("schema_path"),
+            llm_service=job.params.get("llm_service", "bedrock"),
+            llm_model=job.params.get("llm_model", ""),
+            database_uri=job.params.get("database_uri", "bolt://localhost:7687"),
+            chunk_size=job.params.get("chunk_size", 2000),
+            tenant_id=job.params.get("tenant_id", job.tenant_id),
+            project_id=job.params.get("project_id", "default"),
+            incremental=job.params.get("incremental", True),
+        )
+        return result.to_report()
+
+    async def _run_entity_push(self, job: Job) -> dict[str, Any]:
+        """Run entity push (pre-extracted entities from external systems)."""
+        from .pipeline.entity_push import process_entity_push
+
+        stats = await process_entity_push(
+            entities=job.params["entities"],
+            relationships=job.params.get("relationships", []),
+            source_run_id=job.params["source_run_id"],
+            source_system=job.params.get("source_system", "external"),
+            project_id=job.params.get("project_id", "default"),
+            database_uri=job.params.get("database_uri", "bolt://localhost:7687"),
+        )
+        return {
+            "nodes_created": stats.nodes_created,
+            "nodes_merged": stats.nodes_merged,
+            "edges_created": stats.edges_created,
+            "embeddings_queued": stats.embeddings_queued,
+        }
 
 
 _queue: InMemoryJobQueue | None = None

@@ -2,6 +2,7 @@
 
 from .chunk import chunk_documents
 from .dedup import Deduplicator, content_hash
+from .entity_push import EntityPushStats, process_entity_push
 from .extract import extract_entities
 from .gnn_validate import ValidationResult, validate_with_gnn
 from .node_labeler import NodeLabeler
@@ -13,6 +14,7 @@ from .sparselink_extract import extract_from_sparselink
 
 __all__ = [
     "Deduplicator",
+    "EntityPushStats",
     "KGSchema",
     "NodeLabeler",
     "PipelineResult",
@@ -21,6 +23,7 @@ __all__ = [
     "content_hash",
     "extract_entities",
     "extract_from_sparselink",
+    "process_entity_push",
     "publish_to_graph",
     "resolve_entities",
     "run_pipeline",

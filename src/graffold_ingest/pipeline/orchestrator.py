@@ -92,6 +92,8 @@ async def run_pipeline(
     tenant_id: str = "default",
     project_id: str = "default",
     incremental: bool = True,
+    publish_mode: str = "neo4j",
+    parquet_dir: str = "",
     progress_callback: Callable[..., Any] | None = None,
     cancellation_event: asyncio.Event | None = None,
 ) -> PipelineResult:
@@ -111,6 +113,8 @@ async def run_pipeline(
         tenant_id: Tenant scope for incremental state
         project_id: Project scope for incremental state
         incremental: Skip unchanged documents (default True)
+        publish_mode: "neo4j" (default), "parquet", or "dual"
+        parquet_dir: Output directory for Parquet files (empty = default)
         progress_callback: Called with (stage, items_done, items_total)
         cancellation_event: Set to cancel mid-pipeline
 
@@ -244,17 +248,44 @@ async def run_pipeline(
     _progress("publishing", 0, len(results))
 
     try:
-        from .publish import publish_to_graph
+        if publish_mode in ("dual", "parquet"):
+            from .dual_write import publish_dual
+            from .publish_parquet import DEFAULT_OUTPUT_DIR
 
-        counts = await publish_to_graph(
-            results,
-            database_uri=database_uri,
-            database_name=database_name,
-            username=username,
-            password=password,
-        )
-        nodes_pub = counts.get("nodes_created", 0)
-        edges_pub = counts.get("edges_created", 0)
+            _pq_dir = parquet_dir if parquet_dir else str(DEFAULT_OUTPUT_DIR)
+            dual_stats = await publish_dual(
+                results,
+                neo4j_enabled=(publish_mode == "dual"),
+                database_uri=database_uri,
+                database_name=database_name,
+                username=username,
+                password=password,
+                parquet_enabled=True,
+                parquet_dir=_pq_dir,
+            )
+            neo4j_counts = dual_stats.get("neo4j", {})
+            pq_counts = dual_stats.get("parquet", {})
+            nodes_pub = neo4j_counts.get(
+                "nodes_created", pq_counts.get("entities_written", 0)
+            )
+            edges_pub = neo4j_counts.get(
+                "edges_created", pq_counts.get("relationships_written", 0)
+            )
+            if dual_stats.get("errors"):
+                for err in dual_stats["errors"]:
+                    errors.append({"stage": "publishing", "error": err["error"]})
+        else:
+            from .publish import publish_to_graph
+
+            counts = await publish_to_graph(
+                results,
+                database_uri=database_uri,
+                database_name=database_name,
+                username=username,
+                password=password,
+            )
+            nodes_pub = counts.get("nodes_created", 0)
+            edges_pub = counts.get("edges_created", 0)
     except Exception as e:
         errors.append({"stage": "publishing", "error": str(e)})
         nodes_pub = edges_pub = 0

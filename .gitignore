@@ -2,5 +2,11 @@
 __pycache__
 *.pyc
 *.egg-info
+*.egg
 dist
 build
+.DS_Store
+.pytest_cache
+.ruff_cache
+.mypy_cache
+*.parquet

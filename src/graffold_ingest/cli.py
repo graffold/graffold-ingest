@@ -11,7 +11,7 @@ console = Console()
 
 
 @click.group(invoke_without_command=True)
-@click.version_option("0.1.0", prog_name="graffold-ingest")
+@click.version_option("0.2.0", prog_name="graffold-ingest")
 @click.pass_context
 def cli(ctx: click.Context) -> None:
     """graffold-ingest — Turn anything into a knowledge graph."""

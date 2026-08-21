@@ -1,81 +1,152 @@
 # graffold-ingest
 
-Turn anything into a knowledge graph.
+Domain-agnostic knowledge graph ingestion. Extracts entities and relationships from any source, resolves them to canonical IDs, and publishes to your graph database of choice.
 
-Domain-agnostic ingestion agent that scrapes, extracts, and publishes structured knowledge from any source — web pages, PDFs, APIs, CSVs, databases — into a Cypher-compatible graph database.
+## Install
+
+```bash
+uv sync                    # core deps
+uv sync --extra llm        # + LLM backends (boto3, openai)
+uv sync --extra graph      # + community detection (graspologic)
+uv sync --extra storage    # + analytics (duckdb)
+uv sync --extra all        # everything
+```
 
 ## Quick Start
 
 ```bash
-uv sync
-graffold-ingest tui        # Interactive terminal UI
-graffold-ingest scrape     # Scrape a URL or file
-graffold-ingest pipeline   # Run full ingestion pipeline
+# Run the full pipeline on a URL
+graffold-ingest pipeline --source web --url "https://example.com" --service bedrock
+
+# Start the API server
+graffold-ingest serve --port 8001
+
+# Push pre-extracted entities (from Agteria/Atlas)
+curl -X POST http://localhost:8001/v1/entities \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source_run_id": "run-001",
+    "source_system": "agteria",
+    "entities": [{"id": "target:3-nop", "label": "Target", "name": "3-NOP"}],
+    "relationships": [{"source": "target:3-nop", "target": "mech:mcr", "type": "INHIBITS"}]
+  }'
 ```
 
 ## Architecture
 
 ```
-┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-│  Connectors │───▸│   Chunker   │───▸│  Extractor  │───▸│  Publisher  │
-│ web/pdf/api │    │  split docs │    │ LLM entities│    │ graph write │
-└─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘
-                                            │
-                                     ┌──────┴──────┐
-                                     │  Resolver   │
-                                     │ dedup/merge │
-                                     └─────────────┘
+Sources          Pipeline                    Storage            Query
+─────────        ────────                    ───────            ─────
+Web    ─┐                                 ┌─ Neo4j
+PDF    ─┤  Fetch → Chunk → Extract →     │  Neptune (AWS)     DRIFT search
+API    ─┼─ Resolve → Embed → Publish ──→ ├─ DuckDB (local)    Global search
+CSV    ─┤           ↓                     │  Parquet (files)   Local search
+DB     ─┤     Community detect            └─ (any GraphBackend)
+Agteria─┘     (Leiden)
 ```
 
 ## Connectors
 
-| Connector | Sources | Status |
-|-----------|---------|--------|
-| `web` | Any URL, sitemaps, crawling | ✓ |
-| `pdf` | Local PDFs, MarkItDown extraction | ✓ |
-| `api` | REST APIs with pagination | ✓ |
-| `csv` | CSV, Excel, Parquet files | ✓ |
-| `database` | SQL databases via connection string | ✓ |
+| Source | Fetches from |
+|--------|-------------|
+| `web` | URLs, sitemaps, crawl |
+| `pdf` | Local PDFs |
+| `api` | REST APIs with pagination |
+| `csv` | CSV, Excel, Parquet files |
+| `database` | SQL via connection string |
 
-## Pipeline
+## Pipeline Stages
 
+| Stage | What it does |
+|-------|-------------|
+| **Chunk** | Split documents into LLM-sized pieces |
+| **Extract** | LLM discovers entities and relationships (schema-free) |
+| **Resolve** | Deduplicate + canonicalize via UniProt/MONDO/PubChem |
+| **Community** | Leiden clustering at multiple resolutions |
+| **Publish** | MERGE to graph DB with provenance |
+| **Embed** | Generate embeddings (CF Workers AI or local) |
+
+## Search
+
+| Mode | Algorithm | Use case |
+|------|-----------|----------|
+| **DRIFT** | Multi-hop iterative reasoning | Deep questions requiring graph traversal |
+| **Global** | Map-reduce over community summaries | Broad questions about the whole corpus |
+| **Local** | Vector + text search | Specific entity lookups |
+
+## Storage Backends
+
+Parquet is the source of truth. Backends are read/write adapters:
+
+```bash
+GRAPH_BACKEND=neo4j      # Default — Neo4j/Memgraph via Bolt
+GRAPH_BACKEND=neptune    # AWS Neptune via OpenCypher + IAM
+GRAPH_BACKEND=duckdb     # Local — queries Parquet via SQL
 ```
-graffold-ingest pipeline \
-  --source web \
-  --url "https://example.com/docs" \
-  --database memgraph \
-  --service bedrock
+
+Configure via environment:
+```bash
+# Neo4j
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=secret
+
+# Neptune
+NEPTUNE_ENDPOINT=my-cluster.us-east-1.neptune.amazonaws.com
+AWS_REGION=us-east-1
+
+# Parquet output
+PARQUET_DIR=~/.graffold/parquet
 ```
 
-Pipeline stages:
-1. **Fetch** — connector downloads/scrapes raw content
-2. **Chunk** — split into manageable pieces
-3. **Extract** — LLM discovers entities and relationships (schema-free)
-4. **Resolve** — deduplicate and merge entities
-5. **Embed** — generate vector embeddings
-6. **Publish** — write nodes and edges to graph database
+## API Endpoints
 
-## Schema-Free Extraction
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /health` | Liveness check |
+| `POST /v1/entities` | Push pre-extracted entities (from Agteria/Atlas) |
+| `POST /ingest` | Full pipeline job (async) |
+| `GET /jobs/{id}` | Job status |
 
-Unlike traditional NER pipelines, graffold-ingest doesn't require a predefined schema. The LLM discovers entity types and relationship types from the content itself:
+## Entity Resolution
 
+Built-in resolvers canonicalize entities against authoritative databases:
+
+| Resolver | Handles | Authority |
+|----------|---------|-----------|
+| UniProt | Protein, Target, Enzyme | UniProt REST API |
+| MONDO | Disease, Condition | EBI OLS4 |
+| PubChem | Compound, Drug, Chemical | PubChem PUG REST |
+
+## Integration
+
+### With Agteria Platform
+
+Agteria's Temporal workflow auto-publishes to graffold-ingest after each research run:
+```python
+# In publish_to_kg_activity:
+await httpx_client.post(f"{GRAFFOLD_INGEST_URL}/v1/entities", json={...})
 ```
-Input: "Tesla CEO Elon Musk announced the Cybertruck will ship in Q4 2024"
-Output:
-  Nodes: (Person: Elon Musk), (Company: Tesla), (Product: Cybertruck)
-  Edges: (Elon Musk)-[:CEO_OF]->(Tesla), (Tesla)-[:MANUFACTURES]->(Cybertruck)
+
+### With Atlas Pipeline
+
+Atlas stages call graffold-api for validation and cross-run memory:
+```python
+from atlas.native.graffold_client import GraffoldClient
+client = GraffoldClient()
+await client.validate_targets(targets)
+await client.find_similar_decisions("Kill GLP-2R")
 ```
 
-## Works With
+## Development
 
-- **[graffold-api](https://github.com/graffold/graffold-api)** — Query the knowledge graph with natural language
-- **[litecg](https://github.com/graffold/litecg)** — Context graph layer for decision traces
-- **Any Cypher DB** — Neo4j, Memgraph, FalkorDB
+```bash
+uv sync --extra dev
+pytest                     # 55 tests
+ruff check src/            # lint
+graffold-ingest tui        # interactive terminal UI
+```
 
 ## License
 
-Apache 2.0
-
----
-
-*By [Graffold](https://graffold.com)*
+AGPL-3.0 — see [LICENSE](LICENSE). Commercial licensing available (licensing@graffold.com).

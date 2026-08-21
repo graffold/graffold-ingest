@@ -1,9 +1,9 @@
 [project]
 name = "graffold-ingest"
-version = "0.1.0"
-description = "Turn anything into a knowledge graph — domain-agnostic ingestion agent"
+version = "0.2.0"
+description = "Domain-agnostic knowledge graph ingestion — extract, resolve, publish"
 authors = [{name = "Graffold", email = "dev@graffold.com"}]
-license = {text = "Apache-2.0"}
+license = {text = "AGPL-3.0-or-later"}
 requires-python = ">=3.12"
 readme = "README.md"
 dependencies = [

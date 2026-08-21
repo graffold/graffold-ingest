@@ -61,7 +61,7 @@ async def _call_llm(prompt: str, service: str, model_id: str) -> str:
     elif service == "openai":
         return await _call_openai(prompt, model_id or "gpt-4o-mini")
     elif service == "ollama":
-        return await _call_ollama(prompt, model_id or "llama3.1")
+        return await _call_ollama(prompt, model_id or "qwen3:1.7b")
     else:
         raise ValueError(f"Unknown LLM service: {service}")
 

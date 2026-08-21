@@ -8,7 +8,9 @@ from .community import (
     summarize_communities,
 )
 from .dedup import Deduplicator, content_hash
+from .drift_search import DriftResult, drift_search
 from .dual_write import publish_dual
+from .global_search import GlobalSearchResult, global_search
 from .entity_push import EntityPushStats, process_entity_push
 from .extract import extract_entities
 from .gnn_validate import ValidationResult, validate_with_gnn
@@ -24,7 +26,9 @@ __all__ = [
     "Community",
     "CommunityResult",
     "Deduplicator",
+    "DriftResult",
     "EntityPushStats",
+    "GlobalSearchResult",
     "KGSchema",
     "NodeLabeler",
     "PipelineResult",
@@ -32,7 +36,9 @@ __all__ = [
     "chunk_documents",
     "content_hash",
     "detect_communities",
+    "drift_search",
     "extract_entities",
+    "global_search",
     "extract_from_sparselink",
     "parquet_stats",
     "process_entity_push",

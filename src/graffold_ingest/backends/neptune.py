@@ -18,7 +18,7 @@ import os
 import time
 from typing import Any
 
-from ...connectors.base import ExtractionResult
+from ..connectors.base import ExtractionResult
 
 logger = logging.getLogger(__name__)
 

@@ -100,14 +100,14 @@ def get_backend(name: str | None = None, **config: Any) -> GraphBackend:
 def _load_builtin(name: str) -> None:
     """Lazy-load a built-in backend to avoid import errors for missing deps."""
     if name == "neo4j":
-        from .backends.neo4j import Neo4jBackend
+        from .neo4j import Neo4jBackend
 
         register_backend("neo4j", Neo4jBackend)
     elif name == "neptune":
-        from .backends.neptune import NeptuneBackend
+        from .neptune import NeptuneBackend
 
         register_backend("neptune", NeptuneBackend)
     elif name == "duckdb":
-        from .backends.duckdb import DuckDBBackend
+        from .duckdb import DuckDBBackend
 
         register_backend("duckdb", DuckDBBackend)

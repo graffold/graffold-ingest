@@ -6,7 +6,7 @@ import logging
 import os
 from typing import Any
 
-from ...connectors.base import ExtractionResult
+from ..connectors.base import ExtractionResult
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ class Neo4jBackend:
         results: list[ExtractionResult],
         **kwargs: Any,
     ) -> dict[str, int]:
-        from ...pipeline.publish import publish_to_graph
+        from ..pipeline.publish import publish_to_graph
 
         return await publish_to_graph(
             results,

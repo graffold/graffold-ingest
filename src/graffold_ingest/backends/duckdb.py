@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from ...connectors.base import ExtractionResult
+from ..connectors.base import ExtractionResult
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ class DuckDBBackend:
         **kwargs: Any,
     ) -> dict[str, int]:
         """Publish via Parquet writer (DuckDB reads those files)."""
-        from ...pipeline.publish_parquet import publish_to_parquet
+        from ..pipeline.publish_parquet import publish_to_parquet
 
         return await publish_to_parquet(results, output_dir=self._parquet_dir)
 

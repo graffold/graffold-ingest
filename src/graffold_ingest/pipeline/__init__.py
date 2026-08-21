@@ -13,8 +13,6 @@ from .dual_write import publish_dual
 from .global_search import GlobalSearchResult, global_search
 from .entity_push import EntityPushStats, process_entity_push
 from .extract import extract_entities
-from .gnn_validate import ValidationResult, validate_with_gnn
-from .node_labeler import NodeLabeler
 from .orchestrator import PipelineResult, run_pipeline
 from .publish import publish_to_graph
 from .publish_parquet import parquet_stats, publish_to_parquet, read_parquet_graph
@@ -30,9 +28,7 @@ __all__ = [
     "EntityPushStats",
     "GlobalSearchResult",
     "KGSchema",
-    "NodeLabeler",
     "PipelineResult",
-    "ValidationResult",
     "chunk_documents",
     "content_hash",
     "detect_communities",
@@ -49,5 +45,4 @@ __all__ = [
     "resolve_entities",
     "run_pipeline",
     "summarize_communities",
-    "validate_with_gnn",
 ]

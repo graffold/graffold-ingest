@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from abc import ABC, abstractmethod
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -23,21 +22,7 @@ class SchemaVersion:
     description: str = ""
 
 
-class SchemaStore(ABC):
-    @abstractmethod
-    def save(self, tenant_id: str, project_id: str, schema_yaml: str, description: str = "") -> SchemaVersion: ...
-
-    @abstractmethod
-    def get(self, tenant_id: str, project_id: str, version_id: str | None = None) -> SchemaVersion | None: ...
-
-    @abstractmethod
-    def list_versions(self, tenant_id: str, project_id: str) -> list[SchemaVersion]: ...
-
-    @abstractmethod
-    def diff(self, tenant_id: str, project_id: str, v1: str, v2: str) -> dict: ...
-
-
-class FileSchemaStore(SchemaStore):
+class FileSchemaStore:
     """File-based schema version store: {base_dir}/{tenant}/{project}/v{n}.yaml + meta.json."""
 
     def __init__(self, base_dir: Path) -> None:
@@ -76,12 +61,10 @@ class FileSchemaStore(SchemaStore):
             description=description,
         )
 
-        # Write schema file
         d = self._project_dir(tenant_id, project_id)
         d.mkdir(parents=True, exist_ok=True)
         (d / f"v{n}.yaml").write_text(schema_yaml)
 
-        # Update meta
         meta.append({
             "version_id": version_id,
             "n": n,

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,15 +22,7 @@ class ContentFingerprint:
     chunk_count: int
 
 
-class FingerprintStore(ABC):
-    @abstractmethod
-    def save_fingerprints(self, tenant_id: str, project_id: str, fingerprints: list[ContentFingerprint]) -> None: ...
-
-    @abstractmethod
-    def load_fingerprints(self, tenant_id: str, project_id: str) -> dict[str, ContentFingerprint]: ...
-
-
-class FileFingerprintStore(FingerprintStore):
+class FileFingerprintStore:
     """File-based fingerprint store: {base_dir}/{tenant}/{project}/fingerprints.json."""
 
     def __init__(self, base_dir: Path) -> None:
@@ -70,7 +61,7 @@ def _sha256(content: str) -> str:
     return hashlib.sha256(content.encode()).hexdigest()
 
 
-def compute_fingerprint(doc: Document, chunk_count: int = 0) -> ContentFingerprint:
+def compute_fingerprint(doc: "Document", chunk_count: int = 0) -> ContentFingerprint:
     return ContentFingerprint(
         doc_id=doc.id,
         content_hash=_sha256(doc.content),
@@ -81,8 +72,8 @@ def compute_fingerprint(doc: Document, chunk_count: int = 0) -> ContentFingerpri
 
 
 def filter_unchanged(
-    documents: list[Document], existing: dict[str, ContentFingerprint]
-) -> tuple[list[Document], list[Document]]:
+    documents: list["Document"], existing: dict[str, ContentFingerprint]
+) -> tuple[list["Document"], list["Document"]]:
     """Return (changed_docs, unchanged_docs). Only changed/new docs need processing."""
     changed, unchanged = [], []
     for doc in documents:

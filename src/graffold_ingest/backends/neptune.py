@@ -1,12 +1,9 @@
-"""AWS Neptune backend — OpenCypher over HTTPS with IAM SigV4 auth.
+"""AWS Neptune backend — batched OpenCypher via boto3 neptunedata.
 
-Neptune supports OpenCypher (same syntax as Neo4j) via HTTPS endpoint.
-Auth is IAM-based using SigV4 signing.
+Uses UNWIND for batched writes (50 entities/rels per request).
+Auth via IAM (standard boto3 credential chain).
 
-Configuration:
-    NEPTUNE_ENDPOINT: Neptune cluster endpoint (e.g. my-cluster.us-east-1.neptune.amazonaws.com)
-    NEPTUNE_PORT: Port (default: 8182)
-    AWS_REGION: AWS region for SigV4 signing
+Ported from bioingest.pipeline.writers.NeptuneWriter.
 """
 
 from __future__ import annotations
@@ -22,94 +19,124 @@ from ..connectors.base import ExtractionResult
 
 logger = logging.getLogger(__name__)
 
+BATCH_SIZE = 50
+
 
 class NeptuneBackend:
-    """Graph backend using AWS Neptune via OpenCypher HTTPS endpoint."""
+    """Graph backend using AWS Neptune via boto3 neptunedata (OpenCypher)."""
 
     def __init__(
         self,
         endpoint: str | None = None,
         port: int | None = None,
         region: str | None = None,
-        use_iam: bool = True,
         **kwargs: Any,
     ) -> None:
         self._endpoint = endpoint or os.getenv("NEPTUNE_ENDPOINT", "")
         self._port = port or int(os.getenv("NEPTUNE_PORT", "8182"))
         self._region = region or os.getenv("AWS_REGION", "us-east-1")
-        self._use_iam = use_iam
-        self._base_url = f"https://{self._endpoint}:{self._port}"
+        self._client = None
 
     @property
     def name(self) -> str:
         return "neptune"
+
+    @property
+    def client(self):
+        """Lazy-init boto3 neptunedata client."""
+        if self._client is None:
+            import boto3
+            from botocore.config import Config
+
+            cfg = Config(
+                read_timeout=300,
+                connect_timeout=30,
+                retries={"max_attempts": 2},
+            )
+            self._client = boto3.client(
+                "neptunedata",
+                region_name=self._region,
+                endpoint_url=f"https://{self._endpoint}:{self._port}",
+                config=cfg,
+            )
+        return self._client
 
     async def publish(
         self,
         results: list[ExtractionResult],
         **kwargs: Any,
     ) -> dict[str, int]:
-        """Publish entities/relationships via OpenCypher MERGE statements."""
-        import httpx
-
-        nodes_created = 0
-        edges_created = 0
+        """Write entities and relationships via batched UNWIND queries."""
+        nodes_written = 0
+        rels_written = 0
         ingested_at = int(time.time() * 1000)
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            for result in results:
-                version_hash = hashlib.sha256(
-                    result.source_doc_id.encode()
-                ).hexdigest()[:12]
+        for result in results:
+            version_hash = hashlib.sha256(
+                result.source_doc_id.encode()
+            ).hexdigest()[:12]
 
-                # Publish nodes
-                for node in result.nodes:
-                    label = node.get("label", node.get("type", "Entity"))
-                    props = {
-                        k: v for k, v in node.items()
-                        if k not in ("id", "label", "type") and v is not None
-                    }
-                    props["name"] = node.get("name", node.get("id", ""))
-                    props["_source_doc_id"] = result.source_doc_id
-                    props["_ingested_at"] = ingested_at
-                    props["_extraction_method"] = "llm"
-                    props["_version_hash"] = version_hash
+            # ─── Entities (grouped by label, batched) ──────────────────────
+            by_label: dict[str, list[dict]] = {}
+            for node in result.nodes:
+                label = node.get("label", node.get("type", "Entity"))
+                by_label.setdefault(label, []).append({
+                    "id": node["id"],
+                    "name": node.get("name", node["id"]),
+                    "doc_id": result.source_doc_id,
+                    "ingested_at": ingested_at,
+                    "version_hash": version_hash,
+                })
 
-                    cypher = (
-                        f"MERGE (n:`{label}` {{id: $id}}) "
-                        f"SET n += $props"
+            for label, nodes in by_label.items():
+                for i in range(0, len(nodes), BATCH_SIZE):
+                    batch = nodes[i:i + BATCH_SIZE]
+                    query = (
+                        "UNWIND $nodes AS n "
+                        f"MERGE (e:`{label}` {{id: n.id}}) "
+                        "SET e.name = n.name, e.doc_id = n.doc_id, "
+                        "e.ingested_at = n.ingested_at, e.version_hash = n.version_hash"
                     )
-                    resp = await self._execute_cypher(
-                        client, cypher, {"id": node["id"], "props": props}
-                    )
-                    if resp:
-                        nodes_created += 1
+                    try:
+                        self.client.execute_open_cypher_query(
+                            openCypherQuery=query,
+                            parameters=json.dumps({"nodes": batch}),
+                        )
+                        nodes_written += len(batch)
+                    except Exception as e:
+                        logger.warning("Neptune entity batch failed: %s", e)
 
-                # Publish edges
-                for edge in result.edges:
-                    rel_type = edge.get("type", "RELATED_TO")
-                    props = {
-                        k: v for k, v in edge.get("properties", {}).items()
-                        if v is not None
-                    }
-                    props["_source_doc_id"] = result.source_doc_id
-                    props["_ingested_at"] = ingested_at
+            # ─── Relationships (grouped by type, batched) ──────────────────
+            by_type: dict[str, list[dict]] = {}
+            for edge in result.edges:
+                rel_type = edge.get("type", "RELATED_TO")
+                by_type.setdefault(rel_type, []).append({
+                    "source_id": edge.get("source_id", edge.get("source", "")),
+                    "target_id": edge.get("target_id", edge.get("target", "")),
+                    "doc_id": result.source_doc_id,
+                })
 
-                    cypher = (
-                        "MATCH (a {id: $source}), (b {id: $target}) "
-                        f"MERGE (a)-[r:`{rel_type}`]->(b) "
-                        "SET r += $props"
+            for rel_type, rels in by_type.items():
+                for i in range(0, len(rels), BATCH_SIZE):
+                    batch = rels[i:i + BATCH_SIZE]
+                    query = (
+                        "UNWIND $rels AS r "
+                        "MATCH (a {id: r.source_id}) "
+                        "MATCH (b {id: r.target_id}) "
+                        f"MERGE (a)-[:`{rel_type}`]->(b) "
+                        "SET r.doc_id = r.doc_id"
                     )
-                    source_id = edge.get("source_id", edge.get("source", ""))
-                    target_id = edge.get("target_id", edge.get("target", ""))
-                    resp = await self._execute_cypher(
-                        client, cypher,
-                        {"source": source_id, "target": target_id, "props": props},
-                    )
-                    if resp:
-                        edges_created += 1
+                    try:
+                        self.client.execute_open_cypher_query(
+                            openCypherQuery=query,
+                            parameters=json.dumps({"rels": batch}),
+                        )
+                        rels_written += len(batch)
+                    except Exception as e:
+                        logger.warning("Neptune rel batch failed: %s", e)
 
-        return {"nodes_created": nodes_created, "edges_created": edges_created}
+        logger.info("Neptune: wrote %d nodes, %d rels", nodes_written, rels_written)
+        return {"nodes_created": nodes_written, "edges_created": rels_written}
 
     async def query_entities(
         self,
@@ -117,18 +144,20 @@ class NeptuneBackend:
         *,
         limit: int = 10,
     ) -> list[dict[str, Any]]:
-        import httpx
-
-        cypher = (
+        query = (
             "MATCH (e) WHERE toLower(e.name) CONTAINS toLower($term) "
             "RETURN e.id AS id, e.name AS name, labels(e) AS labels "
             "LIMIT $limit"
         )
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            result = await self._execute_cypher(
-                client, cypher, {"term": search_term, "limit": limit}
+        try:
+            resp = self.client.execute_open_cypher_query(
+                openCypherQuery=query,
+                parameters=json.dumps({"term": search_term, "limit": limit}),
             )
-            return result.get("results", []) if result else []
+            return resp.get("results", [])
+        except Exception as e:
+            logger.warning("Neptune query failed: %s", e)
+            return []
 
     async def get_neighbors(
         self,
@@ -136,75 +165,26 @@ class NeptuneBackend:
         *,
         max_hops: int = 1,
     ) -> dict[str, Any]:
-        import httpx
-
-        cypher = (
+        query = (
             "MATCH (e {id: $id})-[r*1..$hops]-(n) "
             "RETURN e.name AS source, collect(DISTINCT n.name) AS neighbors"
         )
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            result = await self._execute_cypher(
-                client, cypher, {"id": entity_id, "hops": max_hops}
+        try:
+            resp = self.client.execute_open_cypher_query(
+                openCypherQuery=query,
+                parameters=json.dumps({"id": entity_id, "hops": max_hops}),
             )
-            return result if result else {"neighbors": []}
+            return resp.get("results", [{}])[0] if resp.get("results") else {"neighbors": []}
+        except Exception as e:
+            logger.warning("Neptune neighbor query failed: %s", e)
+            return {"neighbors": []}
 
     async def health_check(self) -> bool:
-        import httpx
-
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(f"{self._base_url}/status")
-                return resp.status_code == 200
+            self.client.execute_open_cypher_query(
+                openCypherQuery="RETURN 1",
+                parameters="{}",
+            )
+            return True
         except Exception:
             return False
-
-    # ─── Internal ──────────────────────────────────────────────────────────────
-
-    async def _execute_cypher(
-        self,
-        client: Any,
-        cypher: str,
-        parameters: dict[str, Any] | None = None,
-    ) -> dict[str, Any] | None:
-        """Execute OpenCypher query against Neptune HTTPS endpoint."""
-        url = f"{self._base_url}/openCypher"
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
-
-        if self._use_iam:
-            headers.update(self._sign_request(url, "POST"))
-
-        data = {"query": cypher}
-        if parameters:
-            data["parameters"] = json.dumps(parameters)
-
-        try:
-            resp = await client.post(url, data=data, headers=headers)
-            if resp.status_code == 200:
-                return resp.json()
-            logger.warning("Neptune query failed (%d): %s", resp.status_code, resp.text[:200])
-            return None
-        except Exception as e:
-            logger.warning("Neptune request failed: %s", e)
-            return None
-
-    def _sign_request(self, url: str, method: str) -> dict[str, str]:
-        """Generate SigV4 headers for Neptune IAM auth.
-
-        Requires boto3 for credential resolution.
-        """
-        try:
-            from botocore.auth import SigV4Auth
-            from botocore.awsrequest import AWSRequest
-            from botocore.session import Session
-
-            session = Session()
-            credentials = session.get_credentials().get_frozen_credentials()
-            request = AWSRequest(method=method, url=url)
-            SigV4Auth(credentials, "neptune-db", self._region).add_auth(request)
-            return dict(request.headers)
-        except ImportError:
-            logger.warning("boto3/botocore not installed, skipping IAM auth")
-            return {}
-        except Exception as e:
-            logger.warning("SigV4 signing failed: %s", e)
-            return {}

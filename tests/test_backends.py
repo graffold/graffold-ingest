@@ -11,6 +11,7 @@ from graffold_ingest.backends import (
 from graffold_ingest.backends.neo4j import Neo4jBackend
 from graffold_ingest.backends.neptune import NeptuneBackend
 from graffold_ingest.backends.duckdb import DuckDBBackend
+from graffold_ingest.backends.spanner import SpannerGraphBackend
 
 
 class TestProtocolConformance:
@@ -28,6 +29,10 @@ class TestProtocolConformance:
         backend = DuckDBBackend(parquet_dir="/tmp/test")
         assert isinstance(backend, GraphBackend)
 
+    def test_spanner_is_graph_backend(self):
+        backend = SpannerGraphBackend(instance_id="test", database_id="db")
+        assert isinstance(backend, GraphBackend)
+
 
 class TestBackendNames:
     def test_neo4j_name(self):
@@ -38,6 +43,9 @@ class TestBackendNames:
 
     def test_duckdb_name(self):
         assert DuckDBBackend().name == "duckdb"
+
+    def test_spanner_name(self):
+        assert SpannerGraphBackend(instance_id="i", database_id="d").name == "spanner"
 
 
 class TestRegistry:
@@ -52,6 +60,10 @@ class TestRegistry:
     def test_get_backend_duckdb(self):
         backend = get_backend("duckdb")
         assert backend.name == "duckdb"
+
+    def test_get_backend_spanner(self):
+        backend = get_backend("spanner")
+        assert backend.name == "spanner"
 
     def test_get_backend_unknown_raises(self):
         with pytest.raises(ValueError, match="Unknown backend"):

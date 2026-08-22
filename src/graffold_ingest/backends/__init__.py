@@ -111,3 +111,7 @@ def _load_builtin(name: str) -> None:
         from .duckdb import DuckDBBackend
 
         register_backend("duckdb", DuckDBBackend)
+    elif name == "spanner":
+        from .spanner import SpannerGraphBackend
+
+        register_backend("spanner", SpannerGraphBackend)

@@ -217,6 +217,46 @@ async def get_job(job_id: str, tenant_id: str = Depends(_get_tenant)):
     )
 
 
+class QueryRequest(BaseModel):
+    question: str
+    mode: str = "auto"  # auto, drift, global, local
+    llm_service: str = "bedrock"
+    llm_model: str = ""
+    max_hops: int = 1
+    verify: bool = True
+
+
+class QueryResponse(BaseModel):
+    answer: str
+    entities: list[dict] = []
+    relationships: list[dict] = []
+    ungrounded_claims: list[str] = []
+    total_seconds: float = 0.0
+    phases: dict = {}
+
+
+@app.post("/v1/query", response_model=QueryResponse)
+async def query_kg(req: QueryRequest, tenant_id: str = Depends(_get_tenant)):
+    """Query the knowledge graph with LLM-powered reasoning."""
+    from .pipeline.query_agent import query_graph
+
+    result = await query_graph(
+        req.question,
+        llm_service=req.llm_service,
+        llm_model=req.llm_model,
+        max_hops=req.max_hops,
+        verify=req.verify,
+    )
+    return QueryResponse(
+        answer=result.answer,
+        entities=result.entities,
+        relationships=result.relationships,
+        ungrounded_claims=result.ungrounded_claims,
+        total_seconds=result.total_seconds,
+        phases=result.phases,
+    )
+
+
 @app.on_event("startup")
 async def _start_workers():
     from .queue import get_queue

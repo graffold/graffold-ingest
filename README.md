@@ -142,10 +142,28 @@ await client.find_similar_decisions("Kill GLP-2R")
 
 ```bash
 uv sync --extra dev
-pytest                     # 55 tests
+pytest                     # 138 tests
 ruff check src/            # lint
 graffold-ingest tui        # interactive terminal UI
 ```
+
+## Benchmarks
+
+```bash
+python benchmarks/ingest_throughput.py
+python benchmarks/resolution_accuracy.py
+python benchmarks/full_demo.py           # requires Ollama
+```
+
+| Operation | Throughput | Notes |
+|-----------|-----------|-------|
+| Structured ingest | 180,000 entities/sec | CSV → Parquet |
+| Tabular chunking | 920,000 rows/sec | CSV/TSV → markdown chunks |
+| Entity resolution | 800,000 entities/sec | HGNC + synonym (no fuzzy) |
+| Entity resolution | F1 = 1.00 | 9/9 true merges, 0 false merges |
+| LLM extraction | ~6 entities/sec | Ollama qwen3:1.7b (local) |
+| Query (local LLM) | 3–4 sec | Discovery → Expand → Synthesize |
+| Storage | ~27 bytes/entity | Parquet (columnar, compressed) |
 
 ## License
 

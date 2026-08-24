@@ -1,0 +1,59 @@
+[
+  {
+    "name": "Run 1: Neurology panel (100 proteins)",
+    "new_nodes": 101,
+    "new_edges": 100,
+    "total_nodes": 101,
+    "total_edges": 100,
+    "types": {
+      "Protein": 100,
+      "Panel": 1
+    }
+  },
+  {
+    "name": "Run 2: Cardiometabolic panel (100 proteins)",
+    "new_nodes": 101,
+    "new_edges": 100,
+    "total_nodes": 202,
+    "total_edges": 200,
+    "types": {
+      "Protein": 200,
+      "Panel": 2
+    }
+  },
+  {
+    "name": "Run 3: Inflammation panel (100 proteins)",
+    "new_nodes": 101,
+    "new_edges": 100,
+    "total_nodes": 302,
+    "total_edges": 300,
+    "types": {
+      "Protein": 299,
+      "Panel": 3
+    }
+  },
+  {
+    "name": "Run 4: PubMed LLM extraction (3 abstracts)",
+    "new_nodes": 6,
+    "new_edges": 10,
+    "total_nodes": 308,
+    "total_edges": 310,
+    "types": {
+      "Protein": 299,
+      "Panel": 3,
+      "?": 6
+    }
+  },
+  {
+    "name": "Run 5: PubMed LLM extraction (cross-links)",
+    "new_nodes": 17,
+    "new_edges": 12,
+    "total_nodes": 319,
+    "total_edges": 322,
+    "types": {
+      "Protein": 299,
+      "Panel": 3,
+      "?": 17
+    }
+  }
+]

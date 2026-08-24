@@ -115,6 +115,24 @@ async def query_graph(
         found = await backend.query_entities(term, limit=max_entities)
         entities.extend(found)
 
+    # Vector search: embed the question and find similar entities
+    try:
+        from .embed_local import embed_single, cosine_similarity
+
+        q_vec = embed_single(question)
+        if q_vec and hasattr(backend, "query_entities_by_vector"):
+            vec_results = await backend.query_entities_by_vector(q_vec, limit=max_entities)
+            entities.extend(vec_results)
+        elif q_vec and entities:
+            # Re-rank existing results by embedding similarity
+            for e in entities:
+                name = e.get("name", "")
+                e_vec = embed_single(name)
+                e["_similarity"] = cosine_similarity(q_vec, e_vec) if e_vec else 0.0
+            entities.sort(key=lambda x: x.get("_similarity", 0), reverse=True)
+    except Exception:
+        pass  # Embeddings unavailable — text search only
+
     # Deduplicate by ID
     seen_ids: set[str] = set()
     unique_entities: list[dict[str, Any]] = []

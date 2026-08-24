@@ -83,8 +83,8 @@ async def test_extract_truncates_long_content(mock_llm):
     await extract_entities([long_doc])
     # The prompt should have truncated content to 8000 chars
     call_args = mock_llm.call_args[0][0]
-    # Prompt template ~200 chars + 8000 content = ~8200 max
-    assert len(call_args) < 8500
+    # Prompt template ~1100 chars + 8000 content = ~9100 max
+    assert len(call_args) < 9500
 
 
 @pytest.mark.asyncio

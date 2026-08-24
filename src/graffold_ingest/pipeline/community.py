@@ -208,6 +208,7 @@ async def summarize_communities(
     *,
     llm_service: str = "bedrock",
     model_id: str = "",
+    use_llm: bool = True,
 ) -> CommunityResult:
     """Generate title and summary for each community using LLM.
 
@@ -219,10 +220,13 @@ async def summarize_communities(
         nodes: Original node dicts (must have 'id' and 'name' keys).
         llm_service: LLM service to use (bedrock, openai, ollama).
         model_id: Model identifier (uses default per service if empty).
+        use_llm: If True, use LLM for rich summaries. If False, use heuristic.
 
     Returns:
         The input CommunityResult with title/summary fields populated.
     """
+    from .extract import _call_llm
+
     # Build id → name lookup
     id_to_name: dict[str, str] = {
         n["id"]: n.get("name", n.get("label", n["id"])) for n in nodes
@@ -230,10 +234,27 @@ async def summarize_communities(
 
     for community in result.communities:
         member_names = [id_to_name.get(mid, mid) for mid in community.member_ids[:20]]
-        # Placeholder: generate title from member names
-        # In production, this calls an LLM for richer summaries
-        community.title = _generate_title(member_names)
-        community.summary = _generate_summary(member_names, community.level)
+
+        if use_llm and member_names:
+            try:
+                prompt = (
+                    "Given these entities that form a cluster in a knowledge graph, "
+                    "write a 1-line title and a 2-sentence summary describing what "
+                    "connects them. Return JSON: {\"title\": \"...\", \"summary\": \"...\"}\n\n"
+                    f"Entities: {', '.join(member_names[:15])}\n\n"
+                    "Return ONLY valid JSON:"
+                )
+                import json
+                raw = await _call_llm(prompt, llm_service, model_id)
+                data = json.loads(raw)
+                community.title = data.get("title", _generate_title(member_names))
+                community.summary = data.get("summary", _generate_summary(member_names, community.level))
+            except Exception:
+                community.title = _generate_title(member_names)
+                community.summary = _generate_summary(member_names, community.level)
+        else:
+            community.title = _generate_title(member_names)
+            community.summary = _generate_summary(member_names, community.level)
 
     return result
 

@@ -35,19 +35,27 @@ def scrape(url: str, service: str, depth: int) -> None:
 
 
 @cli.command()
-@click.option("--source", type=click.Choice(["web", "pdf", "api", "csv", "database", "agteria"]), required=True)
+@click.option("--source", type=click.Choice(["web", "pdf", "api", "csv", "database", "agteria", "pubmed", "europepmc"]), required=True)
 @click.option("--url", default="")
 @click.option("--path", default="")
+@click.option("--query", default="", help="Search query (pubmed/europepmc)")
+@click.option("--limit", default=25, type=int, help="Max papers to fetch (pubmed/europepmc)")
+@click.option("--full-text/--abstract", default=True, help="Europe PMC: fetch OA full text")
 @click.option("--service", default="bedrock")
 @click.option("--database-uri", default="bolt://localhost:7687")
 @click.option("--publish", "publish_mode", type=click.Choice(["neo4j", "parquet", "dual"]), default="parquet")
 @click.option("--parquet-dir", default="", help="Parquet output directory")
 @click.option("--resolve/--no-resolve", default=True, help="Resolve entities via UniProt/MONDO/PubChem")
 @click.option("--direct", is_flag=True, help="Agteria: use regex extraction (skip LLM)")
-def pipeline(source: str, url: str, path: str, service: str, database_uri: str, publish_mode: str, parquet_dir: str, resolve: bool, direct: bool) -> None:
+def pipeline(source: str, url: str, path: str, query: str, limit: int, full_text: bool, service: str, database_uri: str, publish_mode: str, parquet_dir: str, resolve: bool, direct: bool) -> None:
     """Run the full ingestion pipeline."""
     from .connectors import CONNECTORS
-    from .pipeline import chunk_documents, extract_entities, publish_to_graph, resolve_entities
+    from .pipeline import (
+        chunk_documents,
+        extract_entities,
+        publish_to_graph,
+        resolve_entities,
+    )
 
     console.print(f"[cyan]Pipeline:[/] {source} → extract → publish ({publish_mode})")
 
@@ -58,11 +66,16 @@ def pipeline(source: str, url: str, path: str, service: str, database_uri: str, 
             kwargs["url"] = url
         if path:
             kwargs["path"] = path
+        if query:
+            kwargs["query"] = query
+            kwargs["limit"] = limit
+        if source == "europepmc":
+            kwargs["full_text"] = full_text
 
         # Agteria direct mode: regex extraction, no LLM
         if source == "agteria" and direct:
             from .connectors.agteria import AgteriaConnector
-            from .pipeline.publish_parquet import publish_to_parquet, DEFAULT_OUTPUT_DIR
+            from .pipeline.publish_parquet import DEFAULT_OUTPUT_DIR, publish_to_parquet
 
             results = await AgteriaConnector().extract_direct(**kwargs)
             total_nodes = sum(len(r.nodes) for r in results)
@@ -105,12 +118,25 @@ def pipeline(source: str, url: str, path: str, service: str, database_uri: str, 
         total_edges = sum(len(r.edges) for r in results)
         console.print(f"  Extracted {total_nodes} nodes, {total_edges} edges")
 
-        results = resolve_entities(results)
-        console.print("  Resolved duplicates")
+        # Literature sources use the fuzzy local resolver (collapses name variants)
+        if source in ("pubmed", "europepmc") and resolve:
+            from .resolvers.local import EntityResolver
+
+            r = EntityResolver(enable_fuzzy=True)
+            all_n = [n for res in results for n in res.nodes]
+            all_e = [e for res in results for e in res.edges]
+            merged_n, merged_e = r.resolve(all_n, all_e)
+            from .connectors.base import ExtractionResult
+
+            results = [ExtractionResult(nodes=merged_n, edges=merged_e, source_doc_id=f"{source}:{query[:40]}")]
+            console.print(f"  Resolved {total_nodes} → {len(merged_n)} entities (fuzzy)")
+        else:
+            results = resolve_entities(results)
+            console.print("  Resolved duplicates")
 
         if publish_mode in ("parquet", "dual"):
-            from .pipeline.publish_parquet import publish_to_parquet, DEFAULT_OUTPUT_DIR
             from .pipeline.dual_write import publish_dual
+            from .pipeline.publish_parquet import DEFAULT_OUTPUT_DIR, publish_to_parquet
 
             out = parquet_dir or str(DEFAULT_OUTPUT_DIR)
             if publish_mode == "dual":
@@ -627,7 +653,7 @@ def ingest(program_dir: str | None, llm: bool, resolve: bool, chunks: int) -> No
         # LLM extraction
         if llm and cfg.is_configured:
             from .connectors.base import ExtractionResult
-            from .pipeline.extract import _call_anthropic, EXTRACTION_PROMPT
+            from .pipeline.extract import EXTRACTION_PROMPT, _call_anthropic
 
             all_chunks = chunk_documents(docs, chunk_size=4000)
             n = chunks if chunks > 0 else len(all_chunks)
@@ -739,6 +765,7 @@ def init(api_key: str, atlas_dir: str) -> None:
 
     if cfg.anthropic_api_key:
         import asyncio
+
         import httpx
 
         async def _check():

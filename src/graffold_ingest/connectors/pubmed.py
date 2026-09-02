@@ -1,7 +1,8 @@
 """PubMed connector — fetch abstracts via NCBI E-utilities.
 
 Native graffold-ingest connector: fetch(query=...) → list[Document].
-No API key required for low volume; set NCBI_API_KEY / ENTREZ_API_KEY for higher rate.
+Rate-limited + retried to respect NCBI limits (3 req/s, 10/s with API key).
+Set NCBI_API_KEY / ENTREZ_API_KEY for higher throughput.
 
 Usage:
     connector = PubMedConnector()
@@ -11,8 +12,10 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import time
 from typing import Any
 
 import httpx
@@ -22,6 +25,44 @@ from .base import Document
 logger = logging.getLogger(__name__)
 
 EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
+
+# NCBI: 3 req/s without a key, 10/s with one. Throttle conservatively.
+_last_request_time = 0.0
+_rate_lock = asyncio.Lock()
+
+
+async def _throttle(has_key: bool) -> None:
+    """Space out NCBI requests to respect rate limits."""
+    global _last_request_time
+    min_interval = 0.11 if has_key else 0.34  # ~9/s or ~3/s
+    async with _rate_lock:
+        elapsed = time.monotonic() - _last_request_time
+        if elapsed < min_interval:
+            await asyncio.sleep(min_interval - elapsed)
+        _last_request_time = time.monotonic()
+
+
+async def _get_with_retry(
+    client: httpx.AsyncClient, url: str, params: dict, has_key: bool, retries: int = 4
+) -> httpx.Response | None:
+    """GET with throttle + exponential backoff on 429/502/503."""
+    for attempt in range(retries):
+        await _throttle(has_key)
+        try:
+            resp = await client.get(url, params=params)
+            if resp.status_code in (429, 502, 503):
+                wait = 2**attempt
+                logger.warning("NCBI %d — backing off %ds", resp.status_code, wait)
+                await asyncio.sleep(wait)
+                continue
+            resp.raise_for_status()
+            return resp
+        except httpx.HTTPStatusError:
+            return None
+        except Exception as e:
+            logger.warning("NCBI request error: %s", e)
+            await asyncio.sleep(2**attempt)
+    return None
 
 
 class PubMedConnector:
@@ -40,38 +81,33 @@ class PubMedConnector:
     ) -> list[Document]:
         """Fetch abstracts by search query and/or explicit PMIDs."""
         api_key = os.getenv("NCBI_API_KEY") or os.getenv("ENTREZ_API_KEY", "")
+        has_key = bool(api_key)
         ids = list(pmids or [])
 
         async with httpx.AsyncClient(timeout=30.0) as client:
-            # Search for PMIDs if query given
             if query:
                 params = {"db": "pubmed", "term": query, "retmax": limit, "retmode": "json"}
                 if api_key:
                     params["api_key"] = api_key
-                try:
-                    resp = await client.get(f"{EUTILS}/esearch.fcgi", params=params)
-                    resp.raise_for_status()
-                    found = resp.json().get("esearchresult", {}).get("idlist", [])
-                    ids.extend(found)
-                except Exception as e:
-                    logger.warning("PubMed search failed: %s", e)
+                resp = await _get_with_retry(client, f"{EUTILS}/esearch.fcgi", params, has_key)
+                if resp is not None:
+                    try:
+                        found = resp.json().get("esearchresult", {}).get("idlist", [])
+                        ids.extend(found)
+                    except Exception:
+                        pass
 
             if not ids:
                 return []
 
             ids = ids[:limit]
-
-            # Fetch abstracts (efetch with rettype=abstract, retmode=xml → parse)
             params = {"db": "pubmed", "id": ",".join(ids), "rettype": "abstract", "retmode": "xml"}
             if api_key:
                 params["api_key"] = api_key
-            try:
-                resp = await client.get(f"{EUTILS}/efetch.fcgi", params=params)
-                resp.raise_for_status()
-                return _parse_pubmed_xml(resp.text)
-            except Exception as e:
-                logger.warning("PubMed fetch failed: %s", e)
+            resp = await _get_with_retry(client, f"{EUTILS}/efetch.fcgi", params, has_key)
+            if resp is None:
                 return []
+            return _parse_pubmed_xml(resp.text)
 
 
 def _parse_pubmed_xml(xml_text: str) -> list[Document]:
@@ -91,7 +127,6 @@ def _parse_pubmed_xml(xml_text: str) -> list[Document]:
         title_el = article.find(".//ArticleTitle")
         title = title_el.text if title_el is not None else ""
 
-        # Abstract can have multiple <AbstractText> sections
         abstract_parts = []
         for abs_el in article.findall(".//AbstractText"):
             label = abs_el.get("Label", "")
@@ -105,7 +140,6 @@ def _parse_pubmed_xml(xml_text: str) -> list[Document]:
         if not abstract:
             continue
 
-        # Journal + year for provenance
         journal_el = article.find(".//Journal/Title")
         journal = journal_el.text if journal_el is not None else ""
         year_el = article.find(".//PubDate/Year")

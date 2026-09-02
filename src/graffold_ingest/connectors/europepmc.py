@@ -11,6 +11,7 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -55,12 +56,20 @@ class EuropePMCConnector:
                 "pageSize": min(limit, 100),
                 "resultType": "core",
             }
-            try:
-                resp = await client.get(f"{BASE}/search", params=params)
-                resp.raise_for_status()
-                results = resp.json().get("resultList", {}).get("result", [])
-            except Exception as e:
-                logger.warning("Europe PMC search failed: %s", e)
+            results = []
+            for attempt in range(3):
+                try:
+                    resp = await client.get(f"{BASE}/search", params=params)
+                    if resp.status_code in (429, 502, 503):
+                        await asyncio.sleep(2**attempt)
+                        continue
+                    resp.raise_for_status()
+                    results = resp.json().get("resultList", {}).get("result", [])
+                    break
+                except Exception as e:
+                    logger.warning("Europe PMC search failed (attempt %d): %s", attempt + 1, str(e)[:80])
+                    await asyncio.sleep(2**attempt)
+            if not results:
                 return []
 
             for r in results[:limit]:

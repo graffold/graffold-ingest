@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from ..connectors.base import Document, ExtractionResult
 
-
 EXTRACTION_PROMPT = """You are building a drug discovery knowledge graph. Extract ALL entities and relationships from this pharmaceutical research text.
 
 Entity types to look for:
@@ -115,6 +114,8 @@ async def _call_llm(prompt: str, service: str, model_id: str) -> str:
         return await _call_anthropic(prompt, model_id or "claude-opus-5")
     elif service == "bedrock":
         return await _call_bedrock(prompt, model_id or "anthropic.claude-3-haiku-20240307-v1:0")
+    elif service == "bedrock-llama":
+        return await _call_bedrock_llama(prompt, model_id or "us.meta.llama3-3-70b-instruct-v1:0")
     elif service == "openai":
         return await _call_openai(prompt, model_id or "gpt-4o-mini")
     elif service == "openrouter":
@@ -142,6 +143,37 @@ async def _call_bedrock(prompt: str, model_id: str) -> str:
     response = client.invoke_model(modelId=model_id, body=body)
     result = json.loads(response["body"].read())
     return result["content"][0]["text"]
+
+
+async def _call_bedrock_llama(prompt: str, model_id: str) -> str:
+    """Call AWS Bedrock Llama models (different prompt format than Claude).
+
+    Uses Llama's instruct chat template + max_gen_len. Runs the blocking
+    boto3 call in a thread so the pipeline stays async.
+    """
+    import asyncio
+    import json
+    import os
+
+    import boto3
+
+    region = os.getenv("AWS_REGION", "us-east-1")
+    client = boto3.client("bedrock-runtime", region_name=region)
+    formatted = (
+        "<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\n"
+        f"{prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
+    )
+    body = json.dumps({
+        "prompt": formatted,
+        "max_gen_len": 4096,
+        "temperature": 0.1,
+    })
+
+    def _invoke() -> str:
+        resp = client.invoke_model(modelId=model_id, body=body)
+        return json.loads(resp["body"].read()).get("generation", "")
+
+    return await asyncio.to_thread(_invoke)
 
 
 async def _call_anthropic(prompt: str, model_id: str) -> str:
@@ -190,9 +222,9 @@ async def _call_openai(prompt: str, model_id: str) -> str:
 
 async def _call_ollama(prompt: str, model_id: str) -> str:
     """Call Ollama."""
-    import httpx
-
     import os
+
+    import httpx
 
     base = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     async with httpx.AsyncClient(timeout=120) as client:

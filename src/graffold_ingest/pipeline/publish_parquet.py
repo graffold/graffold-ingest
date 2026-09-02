@@ -7,7 +7,8 @@ Stores graph data as columnar Parquet tables:
 - text_units.parquet
 - documents.parquet
 
-Each write appends to existing files with MERGE-style deduplication by ID.
+Each write appends to existing files. The store is append-only; use
+read_parquet_graph(latest=True) to collapse to the most recent version per ID.
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ ENTITIES_SCHEMA = pa.schema(
         pa.field("type", pa.string()),
         pa.field("description", pa.string()),
         pa.field("source_doc_id", pa.string()),
+        pa.field("run_id", pa.string()),
         pa.field("community_id", pa.string()),
         pa.field("level", pa.int32()),
         pa.field("ingested_at", pa.int64()),
@@ -51,6 +53,7 @@ RELATIONSHIPS_SCHEMA = pa.schema(
         pa.field("weight", pa.float64()),
         pa.field("description", pa.string()),
         pa.field("source_doc_id", pa.string()),
+        pa.field("run_id", pa.string()),
         pa.field("ingested_at", pa.int64()),
     ]
 )
@@ -150,12 +153,12 @@ async def publish_to_parquet(
     documents: list[dict] | None = None,
     text_units: list[dict] | None = None,
     communities: list[dict] | None = None,
+    run_id: str = "",
 ) -> dict[str, int]:
-    """Write extraction results to Parquet files.
+    """Write extraction results to Parquet files (append-only).
 
-    Appends to existing Parquet files (or creates them).
-    Uses PyArrow for efficient columnar storage.
-    Entities are deduplicated by ID (MERGE semantics).
+    Always appends — never overwrites. Every ingest is a timestamped
+    snapshot with run_id for reproducibility.
 
     Args:
         results: Extraction results containing nodes and edges.
@@ -170,6 +173,9 @@ async def publish_to_parquet(
     output_dir = Path(output_dir)
     _ensure_dir(output_dir)
     ingested_at = int(time.time() * 1000)
+    if not run_id:
+        import uuid as _uuid
+        run_id = str(_uuid.uuid4())[:8]
 
     counts: dict[str, int] = {}
 
@@ -184,6 +190,7 @@ async def publish_to_parquet(
                     "type": node.get("label", node.get("type", "Entity")),
                     "description": node.get("description", ""),
                     "source_doc_id": result.source_doc_id,
+                    "run_id": run_id,
                     "community_id": node.get("community_id", ""),
                     "level": node.get("level", 0),
                     "ingested_at": ingested_at,
@@ -195,11 +202,10 @@ async def publish_to_parquet(
         entities_table = pa.Table.from_pylist(
             entity_records, schema=ENTITIES_SCHEMA
         )
-        counts["entities_written"] = _dedup_and_write(
+        counts["entities_written"] = _append_write(
             output_dir / "entities.parquet",
             entities_table,
             ENTITIES_SCHEMA,
-            id_column="id",
         )
     else:
         counts["entities_written"] = 0
@@ -218,6 +224,7 @@ async def publish_to_parquet(
                         "description", edge.get("source_sentence", "")
                     ),
                     "source_doc_id": result.source_doc_id,
+                    "run_id": run_id,
                     "ingested_at": ingested_at,
                 }
             )
@@ -248,11 +255,10 @@ async def publish_to_parquet(
             for c in communities
         ]
         comm_table = pa.Table.from_pylist(community_records, schema=COMMUNITIES_SCHEMA)
-        counts["communities_written"] = _dedup_and_write(
+        counts["communities_written"] = _append_write(
             output_dir / "communities.parquet",
             comm_table,
             COMMUNITIES_SCHEMA,
-            id_column="id",
         )
     else:
         counts["communities_written"] = 0
@@ -270,11 +276,10 @@ async def publish_to_parquet(
             for tu in text_units
         ]
         tu_table = pa.Table.from_pylist(tu_records, schema=TEXT_UNITS_SCHEMA)
-        counts["text_units_written"] = _dedup_and_write(
+        counts["text_units_written"] = _append_write(
             output_dir / "text_units.parquet",
             tu_table,
             TEXT_UNITS_SCHEMA,
-            id_column="id",
         )
     else:
         counts["text_units_written"] = 0
@@ -292,11 +297,10 @@ async def publish_to_parquet(
             for d in documents
         ]
         doc_table = pa.Table.from_pylist(doc_records, schema=DOCUMENTS_SCHEMA)
-        counts["documents_written"] = _dedup_and_write(
+        counts["documents_written"] = _append_write(
             output_dir / "documents.parquet",
             doc_table,
             DOCUMENTS_SCHEMA,
-            id_column="id",
         )
     else:
         counts["documents_written"] = 0
@@ -312,11 +316,15 @@ async def publish_to_parquet(
 
 def read_parquet_graph(
     output_dir: str | Path = DEFAULT_OUTPUT_DIR,
+    latest: bool = False,
 ) -> tuple[list[dict], list[dict]]:
     """Read entities and relationships from Parquet.
 
     Args:
         output_dir: Directory containing Parquet files.
+        latest: If True, deduplicate by ID keeping the most recent
+            row per entity (by ingested_at). The store is append-only,
+            so the raw file may hold multiple versions of the same ID.
 
     Returns:
         Tuple of (nodes, edges) as lists of dicts.
@@ -335,7 +343,31 @@ def read_parquet_graph(
         table = pq.read_table(rels_path, schema=RELATIONSHIPS_SCHEMA)
         edges = table.to_pylist()
 
+    if latest:
+        nodes = _latest_by_id(nodes, "id")
+        edges = _latest_by_edge(edges)
+
     return nodes, edges
+
+
+def _latest_by_id(rows: list[dict], id_col: str) -> list[dict]:
+    """Keep the most recent row per ID (by ingested_at)."""
+    seen: dict[str, dict] = {}
+    for r in rows:
+        rid = r.get(id_col, "")
+        if rid not in seen or r.get("ingested_at", 0) >= seen[rid].get("ingested_at", 0):
+            seen[rid] = r
+    return list(seen.values())
+
+
+def _latest_by_edge(rows: list[dict]) -> list[dict]:
+    """Keep the most recent row per (source_id, target_id, type)."""
+    seen: dict[tuple, dict] = {}
+    for r in rows:
+        key = (r.get("source_id", ""), r.get("target_id", ""), r.get("type", ""))
+        if key not in seen or r.get("ingested_at", 0) >= seen[key].get("ingested_at", 0):
+            seen[key] = r
+    return list(seen.values())
 
 
 def parquet_stats(

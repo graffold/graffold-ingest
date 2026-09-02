@@ -79,14 +79,14 @@ async def test_publish_creates_files(tmp_path, sample_results):
 
 @pytest.mark.asyncio
 async def test_entities_deduplicated_by_id(tmp_path, sample_results, second_results):
-    """Entities with same ID are overwritten (MERGE semantics)."""
+    """With latest=True, entities with same ID collapse to newest (MERGE-on-read)."""
     await publish_to_parquet(sample_results, output_dir=tmp_path)
     await publish_to_parquet(second_results, output_dir=tmp_path)
 
-    nodes, _ = read_parquet_graph(output_dir=tmp_path)
+    nodes, _ = read_parquet_graph(output_dir=tmp_path, latest=True)
     ids = [n["id"] for n in nodes]
 
-    # n2 should appear only once (overwritten by second write)
+    # n2 collapses to one row (latest wins)
     assert ids.count("n2") == 1
     # Total unique entities: n1, n2, n3
     assert len(nodes) == 3
@@ -97,15 +97,28 @@ async def test_entities_deduplicated_by_id(tmp_path, sample_results, second_resu
 
 
 @pytest.mark.asyncio
-async def test_append_mode(tmp_path, sample_results, second_results):
-    """Two writes produce merged result with all unique entities."""
+async def test_append_only_keeps_all_versions(tmp_path, sample_results, second_results):
+    """Raw read (latest=False) keeps every version — append-only provenance log."""
     await publish_to_parquet(sample_results, output_dir=tmp_path)
     await publish_to_parquet(second_results, output_dir=tmp_path)
 
-    nodes, edges = read_parquet_graph(output_dir=tmp_path)
+    nodes, _ = read_parquet_graph(output_dir=tmp_path)  # raw
+    ids = [n["id"] for n in nodes]
+
+    # n2 written twice → appears twice in the raw append log
+    assert ids.count("n2") == 2
+
+
+@pytest.mark.asyncio
+async def test_append_mode(tmp_path, sample_results, second_results):
+    """Two writes collapse to all unique entities with latest=True."""
+    await publish_to_parquet(sample_results, output_dir=tmp_path)
+    await publish_to_parquet(second_results, output_dir=tmp_path)
+
+    nodes, edges = read_parquet_graph(output_dir=tmp_path, latest=True)
 
     assert len(nodes) == 3  # n1, n2 (deduped), n3
-    assert len(edges) == 2  # relationships are appended
+    assert len(edges) == 2  # relationships collapsed by (source, target, type)
 
 
 @pytest.mark.asyncio

@@ -30,8 +30,11 @@ def resolve_entities(results: list[ExtractionResult]) -> list[ExtractionResult]:
         resolved_edges = []
         for edge in result.edges:
             edge = {**edge}
-            edge["source"] = id_remap.get(edge["source"], edge["source"])
-            edge["target"] = id_remap.get(edge["target"], edge["target"])
+            # Support both key conventions
+            src_key = "source" if "source" in edge else "source_id"
+            tgt_key = "target" if "target" in edge else "target_id"
+            edge[src_key] = id_remap.get(edge[src_key], edge[src_key])
+            edge[tgt_key] = id_remap.get(edge[tgt_key], edge[tgt_key])
             resolved_edges.append(edge)
 
         merged_results.append(

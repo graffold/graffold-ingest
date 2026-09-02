@@ -148,6 +148,17 @@ class EntityResolver:
         self.data_dir = data_dir
         self.enable_fuzzy = enable_fuzzy
         self._extended_loaded = False
+        if enable_fuzzy:
+            try:
+                import rapidfuzz  # noqa: F401
+            except ImportError:
+                # ponytail: fail loud, not silent — a missing extra shouldn't
+                # quietly degrade dedup quality. Install: pip install 'graffold-ingest[resolvers]'
+                self.enable_fuzzy = False
+                logger.warning(
+                    "enable_fuzzy=True but rapidfuzz not installed; "
+                    "fuzzy matching disabled. Install the 'resolvers' extra."
+                )
 
     def resolve(
         self,

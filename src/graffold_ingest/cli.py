@@ -1116,6 +1116,56 @@ def context(disease: str, program_dir: str, output: str) -> None:
         console.print(text)
 
 
+@cli.command()
+@click.argument("graph_dir")
+@click.option("--output", "-o", default="", help="Output dir (default: <graph_dir>-harmonized)")
+@click.option("--embeddings/--no-embeddings", default=True, help="Use embedding merge pass")
+@click.option("--threshold", default=0.90, type=float, help="Embedding cosine threshold")
+def harmonize(graph_dir: str, output: str, embeddings: bool, threshold: float) -> None:
+    """Collapse fragmented entities into canonical nodes.
+
+    Global pass over an assembled graph: alias rules (deterministic) +
+    optional within-type embedding merge. Fixes literature fragmentation
+    where one entity (F18, heat-labile toxin) appears as dozens of nodes.
+
+    Examples:
+        graffold-ingest harmonize ~/.graffold/parquet/etec-pigs
+        graffold-ingest harmonize ./graph -o ./graph-clean --no-embeddings
+    """
+    import shutil
+    from pathlib import Path
+
+    from .connectors.base import ExtractionResult
+    from .pipeline.harmonize import harmonize_graph
+    from .pipeline.publish_parquet import publish_to_parquet, read_parquet_graph
+
+    src = Path(graph_dir).expanduser()
+    dst = Path(output).expanduser() if output else src.parent / f"{src.name}-harmonized"
+
+    console.print(f"[cyan]Harmonizing:[/] {src}")
+    n, e = read_parquet_graph(src, latest=True)
+    console.print(f"  Loaded {len(n)} entities, {len(e)} relationships")
+
+    fn, fe, rep = harmonize_graph(n, e, use_embeddings=embeddings, embed_threshold=threshold)
+
+    console.print(f"  Alias merges:     {rep.alias_merges}")
+    console.print(f"  Embedding merges: {rep.embedding_merges}")
+    console.print(f"  [green]OK[/] {rep.entities_before} -> {rep.entities_after} entities, "
+                  f"{rep.edges_before} -> {rep.edges_after} relationships")
+
+    if rep.merge_examples:
+        console.print("\n  [dim]Sample merges:[/]")
+        for orig, canon in rep.merge_examples[:8]:
+            console.print(f"    {orig[:38]:38s} -> {canon[:32]}")
+
+    if dst.exists():
+        shutil.rmtree(dst)
+    dst.mkdir(parents=True)
+    result = ExtractionResult(nodes=fn, edges=fe, source_doc_id=f"{src.name}:harmonized")
+    asyncio.run(publish_to_parquet([result], output_dir=dst, run_id="harmonized"))
+    console.print(f"\n  [green]OK[/] Written to {dst}")
+
+
 def main() -> None:
     cli()
 

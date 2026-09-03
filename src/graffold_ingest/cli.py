@@ -1166,6 +1166,136 @@ def harmonize(graph_dir: str, output: str, embeddings: bool, threshold: float) -
     console.print(f"\n  [green]OK[/] Written to {dst}")
 
 
+@cli.command("ingest-corpus")
+@click.option("--queries", required=True, help="Path to file with one search query per line")
+@click.option("--source", type=click.Choice(["pubmed", "europepmc"]), default="pubmed")
+@click.option("--service", default="bedrock-llama", help="LLM service for extraction")
+@click.option("--output", "-o", required=True, help="Parquet output directory")
+@click.option("--per-query", default=40, type=int, help="Max papers per query")
+@click.option("--paper-cap", default=1000, type=int, help="Total unique paper cap")
+@click.option("--full-text/--abstract", default=True, help="Europe PMC: fetch OA full text")
+@click.option("--relevance", default="", help="Regex; papers must match to be kept")
+@click.option("--harmonize/--no-harmonize", default=True, help="Run harmonization after ingest")
+@click.option("--concurrent", default=5, type=int, help="Concurrent LLM extractions")
+def ingest_corpus(queries: str, source: str, service: str, output: str, per_query: int,
+                  paper_cap: int, full_text: bool, relevance: str, harmonize: bool,
+                  concurrent: int) -> None:
+    """Ingest a whole literature corpus from a query list into one graph.
+
+    Runs fetch -> extract -> fuzzy-resolve -> (harmonize) -> publish over
+    every query in the file, deduplicating papers across queries. This is
+    the product command behind the ETEC case study.
+
+    Checkpointed: re-running skips already-processed papers.
+
+    Example:
+        graffold-ingest ingest-corpus --queries etec-queries.txt \
+          --source pubmed --service bedrock-llama \
+          -o ~/.graffold/parquet/etec --paper-cap 1000
+    """
+    import json
+    import re
+    import time
+    from pathlib import Path
+
+    from .connectors import CONNECTORS
+    from .connectors.base import Document, ExtractionResult
+    from .pipeline.chunk import chunk_documents
+    from .pipeline.extract import extract_entities_parallel
+    from .pipeline.publish_parquet import publish_to_parquet, read_parquet_graph
+    from .resolvers.local import EntityResolver
+
+    qpath = Path(queries).expanduser()
+    if not qpath.exists():
+        console.print(f"[red]Query file not found:[/] {qpath}")
+        return
+    query_list = [q.strip() for q in qpath.read_text().splitlines() if q.strip() and not q.startswith("#")]
+    out_dir = Path(output).expanduser()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint = out_dir / ".corpus_checkpoint.json"
+    processed = set()
+    if checkpoint.exists():
+        try:
+            processed = set(json.loads(checkpoint.read_text()).get("processed", []))
+        except Exception:
+            pass
+
+    rel_re = re.compile(relevance, re.IGNORECASE) if relevance else None
+    console.print(f"[cyan]Corpus ingest:[/] {len(query_list)} queries -> {source} -> {out_dir}")
+    console.print(f"  Cap: {paper_cap} papers | already processed: {len(processed)}")
+
+    async def _run():
+        connector = CONNECTORS[source]()
+        # Gather unique papers across all queries
+        all_docs: dict[str, Document] = {}
+        for q in query_list:
+            if len(all_docs) >= paper_cap:
+                break
+            kwargs = {"query": q, "limit": per_query}
+            if source == "europepmc":
+                kwargs["full_text"] = full_text
+            docs = await connector.fetch(**kwargs)
+            for d in docs:
+                key = d.metadata.get("pmid") or d.id
+                if not key or key in processed or key in all_docs:
+                    continue
+                if rel_re and not rel_re.search(d.content[:3000]):
+                    continue
+                all_docs[key] = d
+                if len(all_docs) >= paper_cap:
+                    break
+            console.print(f"  {q[:44]:44s} (unique: {len(all_docs)})")
+
+        docs = list(all_docs.values())[:paper_cap]
+        ft = sum(1 for d in docs if len(d.content) > 5000)
+        console.print(f"\n  {len(docs)} papers ({ft} full-text). Extracting via {service}...")
+
+        chunks = chunk_documents(docs, chunk_size=4000)
+        resolver = EntityResolver(enable_fuzzy=True)
+        t0 = time.time()
+        total_e = total_r = 0
+        BATCH = 25
+        for i in range(0, len(chunks), BATCH):
+            batch = chunks[i:i + BATCH]
+            results = await extract_entities_parallel(batch, llm_service=service, max_concurrent=concurrent)
+            results = [r for r in results if r and r.nodes]
+            if results:
+                nn = [n for r in results for n in r.nodes]
+                ee = [e for r in results for e in r.edges]
+                mn, me = resolver.resolve(nn, ee)
+                c = await publish_to_parquet(
+                    [ExtractionResult(nodes=mn, edges=me, source_doc_id=f"{source}:batch-{i // BATCH}")],
+                    output_dir=out_dir, run_id=f"corpus-{i // BATCH}")
+                total_e += c["entities_written"]
+                total_r += c["relationships_written"]
+            for c_ in batch:
+                processed.add(c_.id.split("_chunk")[0].replace("pmid:", ""))
+            checkpoint.write_text(json.dumps({"processed": sorted(processed)}))
+            console.print(f"    batch {i // BATCH + 1}/{(len(chunks) + BATCH - 1) // BATCH}: "
+                          f"+{sum(len(r.nodes) for r in results)} ent [{time.time() - t0:.0f}s]")
+
+        console.print(f"\n  [green]OK[/] {total_e} entities, {total_r} relationships in {(time.time()-t0)/60:.1f} min")
+
+        if harmonize:
+            from .pipeline.harmonize import harmonize_graph
+            console.print("\n  [cyan]Harmonizing...[/]")
+            n, e = read_parquet_graph(out_dir, latest=True)
+            fn, fe, rep = harmonize_graph(n, e, use_embeddings=True)
+            console.print(f"    {rep.entities_before} -> {rep.entities_after} entities "
+                          f"({rep.alias_merges} alias, {rep.embedding_merges} embedding)")
+            import shutil
+            hdir = out_dir.parent / f"{out_dir.name}-harmonized"
+            if hdir.exists():
+                shutil.rmtree(hdir)
+            hdir.mkdir(parents=True)
+            await publish_to_parquet(
+                [ExtractionResult(nodes=fn, edges=fe, source_doc_id="harmonized")],
+                output_dir=hdir, run_id="harmonized")
+            console.print(f"    [green]OK[/] Harmonized graph -> {hdir}")
+
+    asyncio.run(_run())
+
+
 def main() -> None:
     cli()
 

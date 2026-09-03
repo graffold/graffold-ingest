@@ -1,0 +1,59 @@
+# ETEC post-weaning diarrhea — literature corpus queries
+# Used with: graffold-ingest ingest-corpus --queries etec-queries.txt
+# Core ETEC
+F18 ETEC adhesion piglet
+F4 ETEC FaeG fimbriae swine
+post-weaning diarrhea enterotoxigenic Escherichia coli
+edema disease pig Shiga toxin
+ETEC heat-labile enterotoxin
+ETEC heat-stable enterotoxin STa STb
+LTB GM1 ganglioside
+# Adhesins & receptors
+fimbrial adhesin Escherichia coli intestinal
+K88 K99 987P fimbriae pig
+bacterial adhesin receptor enterocyte
+F5 F41 fimbriae calf
+mannose-resistant hemagglutination E coli
+type 1 fimbriae FimH
+# Toxins
+cholera toxin B subunit mucosal
+guanylate cyclase C enterotoxin
+STa toxin receptor signaling
+enterotoxin structure function bacterial
+AB5 toxin cellular entry
+toxin neutralization antibody gut
+# Feed additives / interventions
+probiotic weaning piglet gut health
+Lactobacillus swine intestinal
+Bacillus subtilis animal feed
+yeast beta-glucan mannan swine
+medium chain fatty acids antibacterial
+organic acid feed additive pig
+essential oil antimicrobial livestock
+phytobiotic swine performance
+postbiotic gut barrier pig
+prebiotic oligosaccharide weaning
+competitive exclusion Salmonella poultry
+bacteriophage therapy E coli livestock
+# Zinc / state of art
+zinc oxide weaning diarrhea
+copper feed additive antimicrobial pig
+# Host biology / models
+IPEC-J2 intestinal epithelial barrier
+porcine intestinal organoid
+tight junction occludin claudin gut
+TEER transepithelial resistance model
+gut microbiome weaning transition piglet
+intestinal inflammation cytokine pig
+mucin secretion goblet cell intestinal
+antimicrobial peptide defensin gut
+# Antibody / biologic
+egg yolk IgY passive immunity livestock
+nanobody VHH bacterial neutralization
+monoclonal antibody enteric pathogen
+recombinant fimbrial vaccine pig
+# Comparative / mechanism
+enteropathogenic E coli attaching effacing
+Shiga toxin producing E coli cattle
+colibacillosis poultry virulence
+antimicrobial resistance E coli livestock

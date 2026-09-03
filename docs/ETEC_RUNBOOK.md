@@ -213,3 +213,33 @@ encodes *this customer's* intake (program data, not a reusable feature).
 | Harmonize | `harmonize` | `pipeline/harmonize.py` |
 | Query | `ask` / `context` / `trajectory` | `pipeline/query_agent.py`, `query.py` |
 | Export | `export` | `pipeline/export.py` |
+
+---
+
+## vs. Microsoft GraphRAG
+
+GraphRAG (Microsoft Research, MIT) pioneered graph-based RAG. Graffold builds on
+the same foundations (extraction, Leiden communities, local/global/DRIFT search,
+Parquet) and adds what real discovery programs need.
+
+| Capability | Microsoft GraphRAG | Graffold |
+|------------|:------------------:|:--------:|
+| Entity + relationship extraction | ✓ | ✓ |
+| Leiden community detection | ✓ | ✓ |
+| Local / Global / DRIFT search | ✓ | ✓ |
+| Community summaries | ✓ | ✓ |
+| Parquet output | ✓ | ✓ |
+| Entity resolution | name-match only* | 5-strategy + fuzzy + HGNC/UniProt |
+| Semantic harmonization | ✗ | ✓ (alias + embedding + code-guard) |
+| Biomedical resolvers (UniProt/MONDO/PubChem) | ✗ | ✓ |
+| Literature connectors (PubMed/Europe PMC) | ✗ | ✓ built-in |
+| Graph backends | Azure-centric | Neo4j, Neptune, Spanner, DuckDB |
+| Cross-run / institutional memory | ✗ | ✓ (kills, decisions, trajectories) |
+| Decision capture (Atlas fusion) | ✗ | ✓ |
+| Fact verification | ✗ | ✓ |
+| License | MIT | AGPL-3.0 + commercial |
+
+*GraphRAG deduplicates "by name (case-folded, whitespace-normalized)… no proper
+entity resolution step beyond this" (Microsoft team + independent analysis). That
+fragmentation is exactly what Graffold's harmonization solves — F18 collapsed
+from 32 nodes to 3 in this run.

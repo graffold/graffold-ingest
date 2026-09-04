@@ -1,6 +1,6 @@
 [project]
 name = "graffold-ingest"
-version = "0.2.0"
+version = "0.3.0"
 description = "Domain-agnostic knowledge graph ingestion — extract, resolve, publish"
 authors = [{name = "Graffold", email = "dev@graffold.com"}]
 license = {text = "AGPL-3.0-or-later"}

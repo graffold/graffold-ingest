@@ -14,3 +14,6 @@ build
 *.swp
 docs/*.html
 docs/benchmark-report.md
+demo/*.log
+demo/*.json
+demo/feedback_loop/

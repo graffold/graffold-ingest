@@ -216,30 +216,36 @@ encodes *this customer's* intake (program data, not a reusable feature).
 
 ---
 
-## vs. Microsoft GraphRAG
+## Relationship to Microsoft GraphRAG
 
-GraphRAG (Microsoft Research, MIT) pioneered graph-based RAG. Graffold builds on
-the same foundations (extraction, Leiden communities, local/global/DRIFT search,
-Parquet) and adds what real discovery programs need.
+*Technical note for diligence. Graffold and GraphRAG share graph-RAG primitives
+(LLM extraction, Leiden communities, local/global/DRIFT retrieval, Parquet) —
+as do LlamaIndex and LangChain. These primitives are commoditized and
+reproducible. Graffold was developed independently; the biomedical
+discovery-memory thesis was the starting point, not a layer added later.*
 
-| Capability | Microsoft GraphRAG | Graffold |
-|------------|:------------------:|:--------:|
-| Entity + relationship extraction | ✓ | ✓ |
-| Leiden community detection | ✓ | ✓ |
-| Local / Global / DRIFT search | ✓ | ✓ |
-| Community summaries | ✓ | ✓ |
-| Parquet output | ✓ | ✓ |
-| Entity resolution | name-match only* | 5-strategy + fuzzy + HGNC/UniProt |
+The primitives are table stakes. The comparison that matters is what a generic
+graph-RAG tool **cannot retrofit cheaply** — domain resolution, per-program
+memory, and reasoning fusion:
+
+| | Generic graph-RAG (GraphRAG et al.) | Graffold |
+|------------|:-----------------------------------:|:--------:|
+| Extraction / Leiden / DRIFT / Parquet | ✓ | ✓ (parity — commoditized) |
+| Entity resolution | name-match only* | canonical: HGNC/UniProt/MONDO/PubChem |
 | Semantic harmonization | ✗ | ✓ (alias + embedding + code-guard) |
-| Biomedical resolvers (UniProt/MONDO/PubChem) | ✗ | ✓ |
 | Literature connectors (PubMed/Europe PMC) | ✗ | ✓ built-in |
 | Graph backends | Azure-centric | Neo4j, Neptune, Spanner, DuckDB |
 | Cross-run / institutional memory | ✗ | ✓ (kills, decisions, trajectories) |
-| Decision capture (Atlas fusion) | ✗ | ✓ |
+| Reasoning fusion (pipeline decisions) | ✗ | ✓ |
 | Fact verification | ✗ | ✓ |
-| License | MIT | AGPL-3.0 + commercial |
 
 *GraphRAG deduplicates "by name (case-folded, whitespace-normalized)… no proper
-entity resolution step beyond this" (Microsoft team + independent analysis). That
-fragmentation is exactly what Graffold's harmonization solves — F18 collapsed
-from 32 nodes to 3 in this run.
+entity resolution step beyond this" (Microsoft team + independent analysis) —
+the fragmentation Graffold's harmonizer solves (F18: 32 nodes → 3).
+
+**Why "just add a bio layer to GraphRAG" misreads the moat:** the defensibility
+isn't the biology *code* — it's (1) curated domain data + judgment (80K HGNC
+aliases, ontology grounding, a code-aware harmonizer), (2) per-customer
+accumulated memory that compounds and can't be replicated by a new entrant, and
+(3) fusion of a discovery pipeline's actual kill/advance decisions with
+evidence. The graph is a means; the discovery-memory system is the product.

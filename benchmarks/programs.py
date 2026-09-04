@@ -184,7 +184,59 @@ _register(Program(
     ],
 ))
 
-# Alltech — mucin-protecting enzyme inhibitors (THE GOLD STANDARD)
+# Alltech BLINDED-B — keeps aim + enzyme CLASSES, strips specific proteins +
+# named compounds. Eval: does literature enrichment recover NanI/H/J, the
+# UniProt-IDd enzymes, and the ~40 inhibitor compounds on its own?
+_register(Program(
+    slug="alltech-blinded",
+    company="Alltech (blinded eval)",
+    disease="GI mucin-layer protection (swine/poultry)",
+    species="swine,poultry",
+    problem="Block microbial/viral enzymes (sialidases, chitinases, collagenases) that hydrolyze GI mucin and enable pathogen adhesion.",
+    queries=[
+        # Same query set as the full program — the LITERATURE is identical;
+        # only the SEED differs (no specific proteins/compounds).
+        "bacterial sialidase neuraminidase inhibitor",
+        "Clostridium perfringens sialidase NanI NanH NanJ",
+        "chitinase inhibitor allosamidin argifin",
+        "bacterial collagenase inhibitor",
+        "intestinal mucin degradation pathogen adhesion",
+        "sialic acid mucin host pathogen interaction",
+        "neuraminidase inhibitor oseltamivir zanamivir",
+        "flavonoid sialidase inhibition quercetin luteolin",
+        "mucin O-glycosylation intestinal barrier",
+        "influenza neuraminidase drug resistance mutation",
+        "mucin layer gut protection feed additive",
+        "sialidase virulence factor gut bacteria",
+        "chitinase bacterial pathogenesis intestinal",
+        "collagenase Clostridium tissue degradation",
+        "natural product neuraminidase inhibitor plant",
+        "curcumin capsaicin collagenase inhibition",
+        "mucinase pathogen intestinal colonization",
+        "sialoglycan pathogen receptor gut",
+        "Salmonella chitinase host colonization",
+        "PRRS influenza swine sialic acid receptor",
+    ],
+    seed_nodes=[
+        {"id": "program:alltech-blinded", "name": "Mucin-protection program (blinded)", "label": "Program",
+         "description": "Alltech blinded eval — aim + enzyme classes only, no specific targets/compounds"},
+        {"id": "mech:mucin-protection-b", "name": "Mucin-layer protection", "label": "Mechanism"},
+        # Enzyme CLASSES kept (Scenario B), but NO specific NanI/H/J, NO UniProt IDs
+        {"id": "class:sialidase-b", "name": "Sialidase (neuraminidase)", "label": "Mechanism"},
+        {"id": "class:chitinase-b", "name": "Chitinase", "label": "Mechanism"},
+        {"id": "class:collagenase-b", "name": "Collagenase", "label": "Mechanism"},
+        # Constraints from the intake (non-infringing, selectivity)
+        {"id": "constraint:non-infringing", "name": "Non-infringing composition", "label": "Constraint"},
+        {"id": "constraint:selectivity", "name": "Avoid off-target metalloprotease inhibition", "label": "Constraint"},
+        {"id": "constraint:resistance", "name": "Overcome sialidase-inhibitor resistance", "label": "Constraint"},
+    ],
+    seed_edges=[
+        {"source_id": "program:alltech-blinded", "target_id": "mech:mucin-protection-b", "type": "PRIORITIZES"},
+        {"source_id": "class:sialidase-b", "target_id": "mech:mucin-protection-b", "type": "PART_OF"},
+        {"source_id": "class:chitinase-b", "target_id": "mech:mucin-protection-b", "type": "PART_OF"},
+        {"source_id": "class:collagenase-b", "target_id": "mech:mucin-protection-b", "type": "PART_OF"},
+    ],
+))
 _register(Program(
     slug="alltech-mucin",
     company="Alltech",

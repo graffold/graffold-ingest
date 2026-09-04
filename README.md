@@ -108,6 +108,73 @@ PARQUET_DIR=~/.graffold/parquet
 | `POST /ingest` | Full pipeline job (async) |
 | `GET /jobs/{id}` | Job status |
 
+## Use as a Library (SDK)
+
+Everything the CLI does is available as a stable Python API. Import high-level
+verbs and core types straight from the top-level package:
+
+```python
+import asyncio
+from graffold_ingest import (
+    Document, chunk_documents, extract_entities,
+    EntityResolver, harmonize_graph,
+    publish_to_parquet, read_parquet_graph,
+    query_graph, get_backend,
+)
+
+async def main():
+    # 1. Ingest
+    docs = [Document(id="1", content="TP53 inhibits MDM2 in cancer.", source_type="text")]
+    chunks = chunk_documents(docs, chunk_size=2000)
+    results = await extract_entities(chunks, llm_service="bedrock-llama")
+
+    # 2. Resolve + publish
+    resolver = EntityResolver(enable_fuzzy=True)
+    nodes = [n for r in results for n in r.nodes]
+    edges = [e for r in results for e in r.edges]
+    merged_n, merged_e = resolver.resolve(nodes, edges)
+    from graffold_ingest import ExtractionResult
+    await publish_to_parquet(
+        [ExtractionResult(nodes=merged_n, edges=merged_e, source_doc_id="1")],
+        output_dir="./graph",
+    )
+
+    # 3. Harmonize (collapse fragmented entities)
+    n, e = read_parquet_graph("./graph", latest=True)
+    n, e, report = harmonize_graph(n, e, use_embeddings=True)
+    print(f"{report.entities_before} → {report.entities_after} entities")
+
+    # 4. Query
+    backend = get_backend("duckdb", parquet_dir="./graph")
+    answer = await query_graph("What inhibits MDM2?", backend=backend)
+    print(answer.answer)
+
+asyncio.run(main())
+```
+
+**Public API** (stable, `from graffold_ingest import ...`):
+
+| Symbol | Kind | Purpose |
+|--------|------|---------|
+| `Document`, `ExtractionResult` | types | Core data models |
+| `chunk_documents`, `chunk_tabular` | func | Split text / CSV into chunks |
+| `extract_entities`, `extract_entities_parallel` | async | LLM entity/relationship extraction |
+| `EntityResolver` | class | 5-strategy resolution + fuzzy |
+| `harmonize_graph`, `HarmonizeReport` | func/type | Collapse fragmented entities |
+| `detect_communities`, `summarize_communities` | func | Leiden clustering + summaries |
+| `publish_to_parquet`, `read_parquet_graph` | func | Storage (source of truth) |
+| `get_backend`, `GraphBackend` | func/type | Neo4j / Neptune / Spanner / DuckDB |
+| `query_graph`, `QueryResult` | async/type | Graph-grounded QA |
+| `PubMedConnector`, `EuropePMCConnector` | class | Literature fetch |
+
+Bare `import graffold_ingest` is lightweight — heavy deps (torch, boto3, pyarrow)
+load lazily only when the symbol that needs them is used. Submodules remain
+importable for advanced use; names prefixed with `_` are private.
+
+For calling a *hosted* graffold service (rather than embedding the library),
+use the REST API above or a thin typed client (see
+`atlas/native/graffold_client.py` for the pattern).
+
 ## Entity Resolution
 
 Built-in resolvers canonicalize entities against authoritative databases:

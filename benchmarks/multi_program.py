@@ -100,22 +100,35 @@ async def enrich(slug: str, papers: int, per_query: int = 40) -> None:
 
     t0 = time.time()
     BATCH = 25
+    consecutive_empty = 0
     for i in range(0, len(chunks), BATCH):
         batch = chunks[i:i + BATCH]
         results = await extract_entities_parallel(batch, llm_service="bedrock-llama", max_concurrent=6)
         results = [r for r in results if r and r.nodes]
-        if results:
+        # Guard: a full batch of empty results usually means systemic failure
+        # (expired AWS token, Bedrock throttle) — fail loud, don't checkpoint past it.
+        if not results:
+            consecutive_empty += 1
+            if consecutive_empty >= 3:
+                raise RuntimeError(
+                    f"{slug}: 3 consecutive empty batches at batch {i // BATCH + 1} "
+                    f"— likely expired AWS token or Bedrock throttle. Aborting so the "
+                    f"checkpoint doesn't skip these papers. Refresh auth and re-run."
+                )
+        else:
+            consecutive_empty = 0
             nn = [n for r in results for n in r.nodes]
             ee = [e for r in results for e in r.edges]
             mn, me = resolver.resolve(nn, ee)
             await publish_to_parquet(
                 [ExtractionResult(nodes=mn, edges=me, source_doc_id=f"{slug}:batch-{i // BATCH}")],
                 output_dir=d, run_id=f"lit-{i // BATCH}")
-        for c_ in batch:
-            processed.add(c_.id.split("_chunk")[0].replace("pmid:", ""))
-        ckpt.write_text(json.dumps({"processed": sorted(processed)}))
+            # only checkpoint papers we actually processed successfully
+            for c_ in batch:
+                processed.add(c_.id.split("_chunk")[0].replace("pmid:", ""))
+            ckpt.write_text(json.dumps({"processed": sorted(processed)}))
         print(f"  batch {i // BATCH + 1}/{(len(chunks)+BATCH-1)//BATCH}: "
-              f"+{sum(len(r.nodes) for r in results)} ent [{time.time()-t0:.0f}s]")
+              f"+{sum(len(r.nodes) for r in results)} ent [{time.time()-t0:.0f}s]", flush=True)
 
     # harmonize
     from graffold_ingest.pipeline.harmonize import harmonize_graph

@@ -54,3 +54,23 @@ python benchmarks/alltech_eval.py ~/.graffold/parquet/alltech-blinded-harmonized
 ```
 
 *INTERNAL — contains named-prospect evaluation. Not for publication.*
+
+
+## Scenario A (fully blinded) — added after B
+
+Seed: aim only ("protect gut mucin, block pathogen adhesion"). NO enzyme
+classes, NO targets, NO compounds. Thesis-agnostic queries (no sialidase/
+oseltamivir in query strings — that would leak the answer).
+
+| Metric | A (aim only) | B (enzyme classes) |
+|--------|:---:|:---:|
+| Enzyme classes | 2/4 | 4/4 |
+| Specific targets | 5/9 | 6/9 |
+| Named compounds | 3/27 | 8/27 |
+| New targets | 75 | 91 |
+
+Even fully blinded, A recovered all three C. perfringens sialidases
+(NanI/H/J) by name + chitinase from just "protect mucin." The B>A gap is
+the honest, expected result: the enzyme-class hint steers the search into
+the right neighborhood. Story: "point us in the general direction and we
+recover most of it; zero hints and we still find half."

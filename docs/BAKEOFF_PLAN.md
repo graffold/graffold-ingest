@@ -46,28 +46,27 @@ name is a thin mapping, not new plumbing.
 
 ## Phases
 
-### Phase 1 — FalkorDB loader (graffold-ingest)
-`backends/falkordb.py` + `deploy` command. Local-testable against a local
-FalkorDB container. **No API/infra dependency — start here.**
+### Phase 1 — FalkorDB loader (graffold-ingest) ✅ DONE
+`backends/falkordb.py` + `deploy` command. Tested against local FalkorDB.
 
-### Phase 2 — Local FalkorDB + load the clean set
-`docker run falkordb`, load all 5 graphs as named graphs, verify with
-`graffold-ingest ask --backend falkordb --graph alltech`.
+### Phase 2 — Local FalkorDB + load the clean set ✅ DONE
+All graphs loaded as isolated named graphs: alltech, etec, elanco, zoetis,
+master (+ massive-ckd showcase). Per-program serving confirmed.
 
-### Phase 3 — `/v1/atlas/*` endpoints (graffold-api)
-Build the 7 endpoints against FalkorDBDatabase, keyed by `kg_id` → graph name.
-Start with the read endpoints (coverage, evidence, similar-decisions,
-validate-targets); defer `infer-network` (needs GNN) and wire `record-decision`.
+### Phase 3 — `/v1/atlas/*` endpoints (graffold-api) ✅ DONE
+Six endpoints built + verified end-to-end against local FalkorDB. 9 tests.
+Deferred: GNN scoring (heuristic shipped), vector similar-decisions (text
+shipped), infer-network (501).
 
-### Phase 4 — Hetzner deploy
+### Phase 4 — Hetzner deploy ⏳ NEXT
 - Add falkordb service to a compose file.
 - rsync Parquet → box; `deploy` each graph on-box.
-- Expose graffold-api behind API-key auth (not just Cloudflare Access) so the
-  Atlas CLI can reach it with a key. **(needs the CF Access → API-key decision)**
+- Expose graffold-api behind CF Access **service token** (machine-to-machine)
+  so the Atlas CLI reaches it with header keys.
 
-### Phase 5 — end-to-end test with Atlas CLI
-Point Atlas's `GRAFFOLD_API_URL` at Hetzner, `kg_id=alltech`, run its
-validate-targets / evidence-for-claim calls against the real graph.
+### Phase 5 — end-to-end test with Atlas CLI ⏳
+Point Atlas `GRAFFOLD_API_URL` at Hetzner, kg_id=alltech, run its
+validate-targets / evidence-for-claim / record-decision calls live.
 
 ## Open questions
 

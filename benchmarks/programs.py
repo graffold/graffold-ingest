@@ -237,6 +237,51 @@ _register(Program(
         {"source_id": "class:collagenase-b", "target_id": "mech:mucin-protection-b", "type": "PART_OF"},
     ],
 ))
+
+# Alltech BLINDED-A — hardest test. Aim only: "protect gut mucin, block pathogen
+# adhesion." NO enzyme classes, NO proteins, NO compounds. Does literature
+# enrichment rediscover the entire enzyme-inhibition thesis from scratch?
+_register(Program(
+    slug="alltech-blinded-a",
+    company="Alltech (blinded-A eval)",
+    disease="GI mucin-layer protection (swine/poultry)",
+    species="swine,poultry",
+    problem="Protect the gastrointestinal mucin layer and prevent pathogen adhesion in swine and poultry.",
+    queries=[
+        # Broad, thesis-agnostic queries — do NOT name enzymes or compounds.
+        "intestinal mucin layer protection pathogen",
+        "gut mucus barrier pathogen adhesion swine",
+        "poultry intestinal mucin degradation",
+        "mucin glycosylation host pathogen gut",
+        "pathogen colonization intestinal mucus layer",
+        "gut barrier integrity feed additive livestock",
+        "mucosal defense enteric pathogen pig",
+        "intestinal adhesion inhibition bacteria poultry",
+        "mucin turnover gut health animal",
+        "sialic acid gut pathogen swine poultry",
+        "goblet cell mucin secretion intestinal",
+        "enteric pathogen virulence gut colonization",
+        "microbial degradation host glycan intestinal",
+        "gut mucus penetration bacteria mechanism",
+        "anti-adhesion strategy enteric pathogen livestock",
+        "intestinal glycan host microbe interaction",
+        "mucin O-glycan bacterial foraging gut",
+        "pathogen mucin binding intestinal receptor",
+        "feed additive gut integrity poultry swine",
+        "mucosal barrier dysfunction enteric disease",
+    ],
+    seed_nodes=[
+        {"id": "program:alltech-blinded-a", "name": "Mucin-protection program (blinded-A)", "label": "Program",
+         "description": "Alltech hardest blinded eval — aim only, no enzyme classes/targets/compounds"},
+        {"id": "mech:mucin-protection-a", "name": "Mucin-layer protection", "label": "Mechanism"},
+        {"id": "mech:anti-adhesion-a", "name": "Pathogen anti-adhesion", "label": "Mechanism"},
+    ],
+    seed_edges=[
+        {"source_id": "program:alltech-blinded-a", "target_id": "mech:mucin-protection-a", "type": "PRIORITIZES"},
+        {"source_id": "program:alltech-blinded-a", "target_id": "mech:anti-adhesion-a", "type": "PRIORITIZES"},
+    ],
+))
+
 _register(Program(
     slug="alltech-mucin",
     company="Alltech",

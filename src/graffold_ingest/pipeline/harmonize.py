@@ -76,6 +76,26 @@ _PROTECTED_TYPES = {
     "Killed", "Assay", "Decision",
 }
 
+# Extraction-noise patterns — nodes matching these are document artifacts
+# (truncated PMIDs, figure/table refs, meta-phrases), not real entities.
+_NOISE_RE = re.compile(
+    r"^(pmid|doi|ref|reference|fig(ure)?|table|supplementary|section|chapter)\b"
+    r"|^(this|our|the|previous|future|prior|current)\s+(study|studies|research|"
+    r"results?|data|work|authors?|paper|findings?|analysis|section|review|report)"
+    r"|^et al\.?$|^\d{1,4}$|^[ivxlc]+$"  # bare numbers, roman numerals
+    r"|amplicon-based|^unspecified|^n/?a$|^unknown$|^none$",
+    re.IGNORECASE,
+)
+
+
+def _is_noise(node: dict) -> bool:
+    name = (node.get("name") or "").strip()
+    if not name or len(name) < 2:
+        return True
+    if node.get("type") in _PROTECTED_TYPES:
+        return False  # never drop institutional nodes
+    return bool(_NOISE_RE.search(name))
+
 
 @dataclass
 class HarmonizeReport:
@@ -85,6 +105,7 @@ class HarmonizeReport:
     edges_after: int = 0
     alias_merges: int = 0
     embedding_merges: int = 0
+    noise_dropped: int = 0
     merge_examples: list[tuple[str, str]] = field(default_factory=list)
 
 
@@ -213,12 +234,26 @@ def harmonize_graph(
     *,
     use_embeddings: bool = True,
     embed_threshold: float = 0.90,
+    drop_noise: bool = True,
 ) -> tuple[list[dict], list[dict], HarmonizeReport]:
     """Collapse fragmented entities into canonical nodes and remap edges.
+
+    If drop_noise, extraction artifacts (truncated PMIDs, figure/table refs,
+    meta-phrases like 'previous study') are removed before harmonization.
 
     Returns (canonical_nodes, remapped_edges, report).
     """
     report = HarmonizeReport(entities_before=len(nodes), edges_before=len(edges))
+
+    # Pass 0: drop extraction noise
+    if drop_noise:
+        keep_ids = {n["id"] for n in nodes if not _is_noise(n)}
+        report.noise_dropped = len(nodes) - len(keep_ids)
+        nodes = [n for n in nodes if n["id"] in keep_ids]
+        edges = [
+            e for e in edges
+            if e.get("source_id") in keep_ids and e.get("target_id") in keep_ids
+        ]
 
     # Pass 1: deterministic alias rules
     id_remap, canonical = _apply_alias_rules(nodes)

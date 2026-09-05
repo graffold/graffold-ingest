@@ -1296,6 +1296,49 @@ def ingest_corpus(queries: str, source: str, service: str, output: str, per_quer
     asyncio.run(_run())
 
 
+@cli.command()
+@click.argument("root", default="~/.graffold/parquet")
+@click.option("--format", "fmt", type=click.Choice(["md", "html", "json"]), default="md")
+@click.option("--output", "-o", default="", help="Output file (default: stdout)")
+@click.option("--filter", "filt", default="", help="Comma-separated name filters")
+def catalog(root: str, fmt: str, output: str, filt: str) -> None:
+    """Inventory all graphs in a Parquet store; emit a browsable index.
+
+    Scans every graph subfolder, extracts entity/relationship counts, type
+    breakdown, size, and cross-program membership.
+
+    Examples:
+        graffold-ingest catalog
+        graffold-ingest catalog --format html -o catalog.html
+        graffold-ingest catalog --filter alltech,etec,master
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    from .catalog import scan, to_html, to_manifest, to_markdown
+
+    root_p = _Path(root).expanduser()
+    if not root_p.is_dir():
+        console.print(f"[red]Not a directory:[/] {root_p}")
+        return
+    filters = [f.strip() for f in filt.split(",") if f.strip()] or None
+    entries = scan(root_p, filters)
+    console.print(f"[cyan]Cataloged[/] {len(entries)} graphs from {root_p}")
+
+    if fmt == "json":
+        out = _json.dumps(to_manifest(entries), indent=2)
+    elif fmt == "html":
+        out = to_html(entries)
+    else:
+        out = to_markdown(entries)
+
+    if output:
+        _Path(output).expanduser().write_text(out)
+        console.print(f"[green]OK[/] {output}")
+    else:
+        console.print(out)
+
+
 def main() -> None:
     cli()
 

@@ -115,3 +115,7 @@ def _load_builtin(name: str) -> None:
         from .spanner import SpannerGraphBackend
 
         register_backend("spanner", SpannerGraphBackend)
+    elif name == "falkordb":
+        from .falkordb import FalkorDBBackend
+
+        register_backend("falkordb", FalkorDBBackend)

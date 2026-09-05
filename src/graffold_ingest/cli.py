@@ -1339,6 +1339,64 @@ def catalog(root: str, fmt: str, output: str, filt: str) -> None:
         console.print(out)
 
 
+@cli.command()
+@click.argument("graph_dir")
+@click.option("--backend", type=click.Choice(["falkordb", "neo4j", "neptune", "spanner"]), default="falkordb")
+@click.option("--graph", "graph_name", default="", help="Named graph (default: dir name)")
+@click.option("--host", default="localhost")
+@click.option("--port", default=0, type=int, help="0 = backend default")
+def deploy(graph_dir: str, backend: str, graph_name: str, host: str, port: int) -> None:
+    """Load a Parquet graph into a served backend (FalkorDB, Neo4j, ...).
+
+    Reads the latest harmonized snapshot from a Parquet dir and writes it to a
+    named graph in the target DB. For FalkorDB the graph name = per-program key
+    Atlas queries via kg_id.
+
+    Examples:
+        graffold-ingest deploy ~/.graffold/parquet/alltech-mucin-harmonized --graph alltech
+        graffold-ingest deploy ~/.graffold/parquet/master --backend falkordb --graph master
+    """
+    from pathlib import Path as _Path
+
+    from .backends import get_backend
+    from .connectors.base import ExtractionResult
+    from .pipeline.publish_parquet import read_parquet_graph
+
+    d = _Path(graph_dir).expanduser()
+    if not (d / "entities.parquet").exists():
+        console.print(f"[red]No graph at[/] {d}")
+        return
+    name = graph_name or d.name.replace("-harmonized", "").replace("-clean", "")
+
+    console.print(f"[cyan]Deploying[/] {d.name} -> {backend}:{name}")
+    n, e = read_parquet_graph(d, latest=True)
+    console.print(f"  {len(n):,} entities, {len(e):,} relationships")
+
+    kwargs = {"graph_name": name, "host": host}
+    if port:
+        kwargs["port"] = port
+    b = get_backend(backend, **kwargs)
+
+    async def _run():
+        if not await b.health_check():
+            console.print(f"[red]Backend unreachable[/] ({backend} @ {host})")
+            return
+        # publish in chunks for large graphs
+        NODE_BATCH, EDGE_BATCH = 20000, 50000
+        total_n = total_e = 0
+        for i in range(0, len(n), NODE_BATCH):
+            c = await b.publish([ExtractionResult(nodes=n[i:i+NODE_BATCH], edges=[], source_doc_id=name)])
+            total_n += c.get("nodes_created", 0)
+        for i in range(0, len(e), EDGE_BATCH):
+            c = await b.publish([ExtractionResult(nodes=[], edges=e[i:i+EDGE_BATCH], source_doc_id=name)])
+            total_e += c.get("edges_created", 0)
+            if len(e) > EDGE_BATCH:
+                console.print(f"  edges {min(i+EDGE_BATCH, len(e)):,}/{len(e):,}")
+        console.print(f"  [green]OK[/] {total_n:,} entities, {total_e:,} rels -> {backend}:{name}")
+
+    asyncio.run(_run())
+
+
 def main() -> None:
     cli()
 
